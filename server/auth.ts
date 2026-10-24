@@ -47,11 +47,31 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
-    // Verify user is still active in database
-    const current = db.get().users.find((u) => u.id === decoded.id);
-    if (!current || !current.isActive) {
-      return res.status(403).json({ error: 'User account is deactivated or invalid' });
+    
+    // In serverless / multi-container environments, if user is not in current container memory,
+    // restore the user from the cryptographically verified JWT payload
+    let current = db.get().users.find((u) => u.id === decoded.id);
+    if (!current) {
+      current = {
+        id: decoded.id,
+        email: decoded.email,
+        name: decoded.name || 'User',
+        role: decoded.role,
+        employeeId: decoded.employeeId,
+        isActive: true,
+        mustChangePassword: decoded.mustChangePassword,
+        passwordHash: '',
+        createdAt: new Date().toISOString(),
+      };
+      db.update((draft) => {
+        draft.users.push(current!);
+      });
     }
+
+    if (current && !current.isActive) {
+      return res.status(403).json({ error: 'This user account has been deactivated. Please contact your administrator.' });
+    }
+
     req.user = {
       id: current.id,
       email: current.email,
