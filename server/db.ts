@@ -240,7 +240,10 @@ export interface DatabaseSchema {
   aiLogs: AILogEntry[];
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+import os from 'os';
+
+const isVercel = !!process.env.VERCEL;
+const DATA_DIR = isVercel ? path.join(os.tmpdir(), 'hcm_data') : path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'hcm_db.json');
 
 const DEFAULT_SETTINGS: CompanySettings = {

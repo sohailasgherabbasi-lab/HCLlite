@@ -93,6 +93,7 @@
 
 ## 🛠️ Tech Stack & Architecture
 
-- **Backend**: Node.js & Express (`server.ts`), JSON-backed persistent transactional store (`server/db.ts`), JWT authentication, `bcryptjs` password hashing.
+- **Backend**: Node.js & Express (`server.ts` / `server/app.ts`), JSON-backed persistent store (`server/db.ts`), JWT authentication, `bcryptjs` password hashing.
 - **Frontend**: React 19, TypeScript, Tailwind CSS, Lucide icons, Motion.
 - **AI Engine**: Gemini API (`@google/genai`) with server-side tool calling (`get_headcount`, `get_attendance_summary`, `get_late_comers`, `get_leave_summary`, `get_my_leave_balance`, `get_payroll_summary`, `search_employees`).
+- **Deployment**: Supports both full Node.js servers (Docker/Cloud Run/Railway) and Vercel Serverless/Static hosting with an automatic client-side fallback engine (`src/api/clientDb.ts`) and configured `vercel.json`.
