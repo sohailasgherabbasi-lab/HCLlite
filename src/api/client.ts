@@ -107,13 +107,27 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
   const method = (options.method || 'GET').toUpperCase();
   const body = options.body ? JSON.parse(options.body as string) : {};
   const dbState = clientDb.get();
-  const activeUser = tokenStorage.getActiveUser() || dbState.users[0] || {
-    id: 'usr_admin_1',
-    name: 'Sohail Abbasi (Admin)',
-    email: 'admin@hcmlite.com',
-    role: 'admin',
-    isActive: true,
-  };
+  const currentToken = tokenStorage.get();
+  let activeUser = tokenStorage.getActiveUser();
+
+  // If token specifies a user ID, prioritize that user
+  if (currentToken && currentToken.startsWith('client_token_')) {
+    const tokenId = currentToken.replace('client_token_', '');
+    const userFromToken = dbState.users.find((u: any) => u.id === tokenId);
+    if (userFromToken) {
+      activeUser = userFromToken;
+    }
+  }
+
+  if (!activeUser) {
+    activeUser = dbState.users[0] || {
+      id: 'usr_admin_1',
+      name: 'Sohail Abbasi (Admin)',
+      email: 'admin@hcmlite.com',
+      role: 'admin',
+      isActive: true,
+    };
+  }
 
   // Helper to record audit log in clientDb
   const addAudit = (action: string, entity: string, details: string, entityId?: string) => {
@@ -216,14 +230,24 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
         }
 
         if (endpoint === '/auth/change-password' && method === 'POST') {
+          const freshUser = { ...activeUser, mustChangePassword: false };
+          tokenStorage.setActiveUser(freshUser);
           clientDb.mutate((d) => {
             const u = d.users.find((x: any) => x.id === activeUser.id);
             if (u) {
               u.mustChangePassword = false;
+              if (body.newPassword) {
+                u.password = body.newPassword;
+                u.passwordHash = body.newPassword;
+              }
             }
           });
           addAudit('UPDATE', 'AUTH', `Password changed for ${activeUser.name}`, activeUser.id);
-          return resolve({ message: 'Password updated successfully' } as unknown as T);
+          return resolve({
+            message: 'Password updated successfully',
+            token: 'client_token_' + activeUser.id,
+            user: freshUser,
+          } as unknown as T);
         }
 
         if (endpoint === '/auth/seed-demo') {
@@ -251,12 +275,22 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
         }
 
         if (endpoint === '/auth/me') {
-          const u = activeUser;
-          const emp = dbState.employees.find((e: any) => e.id === u.employeeId);
+          const freshDb = clientDb.get();
+          const target = freshDb.users.find((x: any) => x.id === activeUser.id) || activeUser;
+          const u = {
+            id: target.id,
+            name: target.name,
+            email: target.email,
+            role: target.role,
+            employeeId: target.employeeId,
+            mustChangePassword: !!target.mustChangePassword,
+          };
+          tokenStorage.setActiveUser(u);
+          const emp = freshDb.employees.find((e: any) => e.id === u.employeeId);
           return resolve({
             user: u,
             employeeProfile: emp,
-            settings: dbState.settings,
+            settings: freshDb.settings,
           } as unknown as T);
         }
 
@@ -924,7 +958,19 @@ export const api = {
   getStatus: () => apiRequest<{ isInitialized: boolean; companyName: string; adminCount: number; employeeCount: number }>('/auth/status'),
   firstRun: (data: any) => apiRequest<{ token: string; user: any; settings: any }>('/auth/first-run', { method: 'POST', body: JSON.stringify(data) }),
   login: (credentials: { email: string; password: string }) => apiRequest<{ token: string; user: any }>('/auth/login', { method: 'POST', body: JSON.stringify(credentials) }),
-  changePassword: (data: { oldPassword?: string; newPassword: string }) => apiRequest<{ message: string }>('/auth/change-password', { method: 'POST', body: JSON.stringify(data) }),
+  changePassword: async (data: { oldPassword?: string; newPassword: string }) => {
+    const res = await apiRequest<{ message: string; token?: string; user?: any }>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    if (res.token) {
+      tokenStorage.set(res.token);
+    }
+    if (res.user) {
+      tokenStorage.setActiveUser(res.user);
+    }
+    return res;
+  },
   getMe: () => apiRequest<{ user: any; employeeProfile?: any; settings: any }>('/auth/me'),
   seedDemo: () => apiRequest<{ message: string; demoCredentials: any }>('/auth/seed-demo', { method: 'POST' }),
   resetDemo: () => apiRequest<{ message: string }>('/auth/reset-demo', { method: 'POST' }),

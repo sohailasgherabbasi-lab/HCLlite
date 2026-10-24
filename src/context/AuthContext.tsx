@@ -11,6 +11,7 @@ interface AuthContextType {
   darkMode: boolean;
   login: (token: string, user: User) => void;
   logout: () => void;
+  updateUser: (partial: Partial<User>) => void;
   refreshSession: () => Promise<void>;
   toggleDarkMode: () => void;
   checkStatus: () => Promise<void>;
@@ -84,8 +85,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshSession();
   }, [refreshSession]);
 
+  const updateUser = (partial: Partial<User>) => {
+    setUser((prev) => {
+      if (!prev) return null;
+      const updated = { ...prev, ...partial };
+      tokenStorage.setActiveUser(updated);
+      return updated;
+    });
+  };
+
   const login = (newToken: string, newUser: User) => {
     tokenStorage.set(newToken);
+    tokenStorage.setActiveUser(newUser);
     setToken(newToken);
     setUser(newUser);
     refreshSession();
@@ -108,6 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         darkMode,
         login,
         logout,
+        updateUser,
         refreshSession,
         toggleDarkMode,
         checkStatus,

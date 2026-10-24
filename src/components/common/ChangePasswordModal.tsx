@@ -14,7 +14,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
   onClose,
   isMandatory = false,
 }) => {
-  const { user, refreshSession } = useAuth();
+  const { user, refreshSession, updateUser } = useAuth();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -42,12 +42,17 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
         oldPassword: isMandatory ? undefined : oldPassword,
         newPassword,
       });
+
+      // Clear password reset flag immediately so modal unmounts
+      updateUser({ mustChangePassword: false });
       setSuccess(true);
-      await refreshSession();
+
+      // Dismiss modal promptly
       setTimeout(() => {
         setSuccess(false);
         onClose();
-      }, 1500);
+        refreshSession().catch(() => {});
+      }, 600);
     } catch (err: any) {
       setError(err.message || 'Failed to update password');
     } finally {

@@ -219,7 +219,21 @@ authRouter.post('/change-password', authenticate, (req: AuthenticatedRequest, re
     details: `Password changed for user ${user.name} (${user.email})`,
   });
 
-  res.json({ message: 'Password updated successfully' });
+  const updated = db.get().users.find((x) => x.id === user.id) || { ...user, mustChangePassword: false };
+  const newToken = generateToken(updated);
+
+  res.json({
+    message: 'Password updated successfully',
+    token: newToken,
+    user: {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      role: updated.role,
+      employeeId: updated.employeeId,
+      mustChangePassword: false,
+    },
+  });
 });
 
 // GET /api/auth/me
