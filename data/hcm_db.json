@@ -1,0 +1,346 @@
+{
+  "isInitialized": true,
+  "settings": {
+    "companyName": "Zaitoon Tech Hub (HCM Lite)",
+    "currency": "PKR",
+    "officeStart": "09:00",
+    "graceMinutes": 15,
+    "halfDayHours": 5,
+    "weekendDays": [
+      0,
+      6
+    ],
+    "officeLat": 24.8607,
+    "officeLng": 67.0011,
+    "officeRadiusMeters": 150,
+    "leaveQuotas": {
+      "annual": 14,
+      "sick": 8,
+      "casual": 10,
+      "unpaid": -1
+    },
+    "latePenaltyDeduction": true
+  },
+  "departments": [
+    {
+      "id": "dept_eng",
+      "name": "Engineering",
+      "code": "ENG",
+      "description": "Software Development & Systems",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "dept_hr",
+      "name": "Human Resources",
+      "code": "HR",
+      "description": "People & Culture",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "dept_sales",
+      "name": "Sales & Growth",
+      "code": "SLS",
+      "description": "Client acquisition & partnerships",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    }
+  ],
+  "designations": [
+    {
+      "id": "des_se",
+      "name": "Senior Full Stack Engineer",
+      "departmentId": "dept_eng",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "des_fe",
+      "name": "UI/UX Developer",
+      "departmentId": "dept_eng",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "des_hr",
+      "name": "People Operations Lead",
+      "departmentId": "dept_hr",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "des_sls",
+      "name": "Enterprise Sales Executive",
+      "departmentId": "dept_sales",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    }
+  ],
+  "holidays": [
+    {
+      "id": "hol_1",
+      "name": "Pakistan Day",
+      "date": "2026-03-23"
+    },
+    {
+      "id": "hol_2",
+      "name": "Labour Day",
+      "date": "2026-05-01"
+    },
+    {
+      "id": "hol_3",
+      "name": "Independence Day",
+      "date": "2026-08-14"
+    },
+    {
+      "id": "hol_4",
+      "name": "Iqbal Day",
+      "date": "2026-11-09"
+    },
+    {
+      "id": "hol_5",
+      "name": "Quaid-e-Azam Day",
+      "date": "2026-12-25"
+    }
+  ],
+  "users": [
+    {
+      "id": "usr_admin_1",
+      "email": "admin@hcmlite.com",
+      "passwordHash": "$2b$10$63zWRkmB2sArK0MOmd8kk.lfpN8OwmmxmxufY2QpqnMGqR8.Q2692",
+      "role": "admin",
+      "name": "Sohail Abbasi (Admin)",
+      "isActive": true,
+      "mustChangePassword": false,
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "usr_hr_1",
+      "email": "hr@hcmlite.com",
+      "passwordHash": "$2b$10$XR2kPqJbRuEUx12Hg0.20uj7elZ5aHTOXASr8n35sexEsMb43F6iq",
+      "role": "hr",
+      "name": "Ayesha Khan (HR Lead)",
+      "isActive": true,
+      "mustChangePassword": false,
+      "createdAt": "2026-10-24T19:39:04.757Z",
+      "lastLoginAt": "2026-10-24T19:39:10.872Z"
+    },
+    {
+      "id": "usr_emp_1",
+      "email": "ali.raza@hcmlite.com",
+      "passwordHash": "$2b$10$9UwJcwfp3T.oGgnj3sZc3uCdY7iLSKU/KBnAm8gAZL.AzL.eak.Zq",
+      "role": "employee",
+      "name": "Ali Raza",
+      "employeeId": "emp_1",
+      "isActive": true,
+      "mustChangePassword": false,
+      "createdAt": "2026-10-24T19:39:04.757Z",
+      "lastLoginAt": "2026-10-24T19:39:39.645Z"
+    },
+    {
+      "id": "usr_emp_2",
+      "email": "fatima.zahra@hcmlite.com",
+      "passwordHash": "$2b$10$9UwJcwfp3T.oGgnj3sZc3uCdY7iLSKU/KBnAm8gAZL.AzL.eak.Zq",
+      "role": "employee",
+      "name": "Fatima Zahra",
+      "employeeId": "emp_2",
+      "isActive": true,
+      "mustChangePassword": false,
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "usr_emp_3",
+      "email": "bilal.tariq@hcmlite.com",
+      "passwordHash": "$2b$10$9UwJcwfp3T.oGgnj3sZc3uCdY7iLSKU/KBnAm8gAZL.AzL.eak.Zq",
+      "role": "employee",
+      "name": "Bilal Tariq",
+      "employeeId": "emp_3",
+      "isActive": true,
+      "mustChangePassword": false,
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    }
+  ],
+  "employees": [
+    {
+      "id": "emp_1",
+      "employeeCode": "EMP-001",
+      "userId": "usr_emp_1",
+      "firstName": "Ali",
+      "lastName": "Raza",
+      "email": "ali.raza@hcmlite.com",
+      "phone": "+92 300 1234567",
+      "address": "Gulshan-e-Iqbal, Block 4, Karachi",
+      "gender": "male",
+      "departmentId": "dept_eng",
+      "designationId": "des_se",
+      "joiningDate": "2025-01-15",
+      "status": "active",
+      "basicSalary": 160000,
+      "hra": 64000,
+      "medical": 16000,
+      "grossSalary": 240000,
+      "createdAt": "2026-10-24T19:39:04.757Z",
+      "updatedAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "emp_2",
+      "employeeCode": "EMP-002",
+      "userId": "usr_emp_2",
+      "firstName": "Fatima",
+      "lastName": "Zahra",
+      "email": "fatima.zahra@hcmlite.com",
+      "phone": "+92 321 7654321",
+      "address": "Clifton Block 5, Karachi",
+      "gender": "female",
+      "departmentId": "dept_eng",
+      "designationId": "des_fe",
+      "joiningDate": "2025-06-01",
+      "status": "active",
+      "basicSalary": 120000,
+      "hra": 48000,
+      "medical": 12000,
+      "grossSalary": 180000,
+      "createdAt": "2026-10-24T19:39:04.757Z",
+      "updatedAt": "2026-10-24T19:39:04.757Z"
+    },
+    {
+      "id": "emp_3",
+      "employeeCode": "EMP-003",
+      "userId": "usr_emp_3",
+      "firstName": "Bilal",
+      "lastName": "Tariq",
+      "email": "bilal.tariq@hcmlite.com",
+      "phone": "+92 333 9876543",
+      "address": "PECHS Block 2, Karachi",
+      "gender": "male",
+      "departmentId": "dept_sales",
+      "designationId": "des_sls",
+      "joiningDate": "2025-09-10",
+      "status": "probation",
+      "basicSalary": 100000,
+      "hra": 40000,
+      "medical": 10000,
+      "grossSalary": 150000,
+      "createdAt": "2026-10-24T19:39:04.757Z",
+      "updatedAt": "2026-10-24T19:39:04.757Z"
+    }
+  ],
+  "attendance": [
+    {
+      "id": "att_1",
+      "employeeId": "emp_1",
+      "date": "2026-10-24",
+      "checkInTime": "2026-10-24T08:55:00.000Z",
+      "checkOutTime": "2026-10-24T17:15:00.000Z",
+      "status": "present",
+      "workedHours": 8.3,
+      "source": "camera",
+      "locationVerified": true,
+      "faceDetected": true,
+      "createdAt": "2026-10-24T08:55:00.000Z"
+    },
+    {
+      "id": "att_2",
+      "employeeId": "emp_2",
+      "date": "2026-10-24",
+      "checkInTime": "2026-10-24T09:25:00.000Z",
+      "status": "late",
+      "workedHours": 0,
+      "source": "web",
+      "createdAt": "2026-10-24T09:25:00.000Z"
+    }
+  ],
+  "corrections": [],
+  "leaves": [
+    {
+      "id": "leave_1",
+      "employeeId": "emp_3",
+      "leaveType": "casual",
+      "startDate": "2026-10-24",
+      "endDate": "2026-10-24",
+      "workingDays": 1,
+      "reason": "Personal family matter",
+      "status": "approved",
+      "reviewedBy": "usr_hr_1",
+      "reviewedAt": "2026-10-24T19:39:04.757Z",
+      "reviewComment": "Approved by HR Lead.",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    }
+  ],
+  "payrollRuns": [],
+  "announcements": [
+    {
+      "id": "ann_1",
+      "title": "Welcome to HCM Lite — Saylani Hackathon 2026",
+      "content": "Company policies, automated attendance, leave quotas, and payroll are now officially active. AI Assistant is online.",
+      "authorId": "usr_admin_1",
+      "authorName": "Sohail Abbasi (Admin)",
+      "authorRole": "admin",
+      "priority": "important",
+      "category": "policy",
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    }
+  ],
+  "notifications": [
+    {
+      "id": "notif_1",
+      "userId": "usr_emp_1",
+      "title": "System Initialized",
+      "message": "Welcome to your employee portal. Check in and manage leaves seamlessly.",
+      "type": "system",
+      "isRead": false,
+      "createdAt": "2026-10-24T19:39:04.757Z"
+    }
+  ],
+  "auditLogs": [
+    {
+      "id": "aud_1792870739609_a9ver",
+      "actorId": "usr_admin_1792870739500",
+      "actorName": "Sohail Abbasi",
+      "actorRole": "admin",
+      "action": "FIRST_RUN",
+      "entity": "ORGANIZATION",
+      "entityId": "usr_admin_1792870739500",
+      "details": "First run setup completed by Sohail Abbasi (admin@hcmlite.com)",
+      "afterState": {
+        "companyName": "Saylani Tech Park",
+        "adminEmail": "admin@hcmlite.com"
+      },
+      "ip": "127.0.0.1",
+      "createdAt": "2026-10-24T19:38:59.609Z"
+    }
+  ],
+  "aiLogs": [
+    {
+      "id": "ai_1792870769001_q4bf",
+      "userId": "usr_emp_1",
+      "role": "employee",
+      "prompt": "Mera leave balance kitna hai?",
+      "response": "Your remaining leave balances for this calendar year:\n• Annual Leave: 14 days remaining (out of 14)\n• Sick Leave: 8 days remaining (out of 8)\n• Casual Leave: 10 days remaining (out of 10)\n• Unpaid Leave: Unlimited availability (subject to approval)",
+      "toolCalls": [
+        "get_my_leave_balance"
+      ],
+      "durationMs": 221,
+      "isFallback": true,
+      "createdAt": "2026-10-24T19:39:29.001Z"
+    },
+    {
+      "id": "ai_1792870758510_qjfc",
+      "userId": "usr_emp_1",
+      "role": "employee",
+      "prompt": "What is Bilal's salary?",
+      "response": "I cannot share colleague compensation data due to strict privacy and role-based access restrictions.",
+      "toolCalls": [],
+      "durationMs": 0,
+      "isFallback": false,
+      "createdAt": "2026-10-24T19:39:18.510Z"
+    },
+    {
+      "id": "ai_1792870751304_3jlf",
+      "userId": "usr_hr_1",
+      "role": "hr",
+      "prompt": "Who is on leave today?",
+      "response": "There are 1 employees on approved leave today:\n• Bilal Tariq (Sales & Growth): casual leave - \"Personal family matter\"",
+      "toolCalls": [
+        "get_leave_summary"
+      ],
+      "durationMs": 415,
+      "isFallback": true,
+      "createdAt": "2026-10-24T19:39:11.304Z"
+    }
+  ]
+}
