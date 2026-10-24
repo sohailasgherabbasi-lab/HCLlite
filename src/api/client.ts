@@ -529,73 +529,219 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
         // -------------------------------------------------------------
         // ATTENDANCE & SHIFTS
         // -------------------------------------------------------------
+        // ATTENDANCE & SHIFTS
+        // -------------------------------------------------------------
         if (endpoint.startsWith('/attendance/today')) {
-          const todayStr = new Date().toISOString().split('T')[0];
-          const roster = dbState.employees.map((emp: any) => {
-            const att = dbState.attendance.find((a: any) => a.employeeId === emp.id && a.date === todayStr);
+          const urlParams = new URLSearchParams(endpoint.includes('?') ? endpoint.split('?')[1] : '');
+          const targetDate = urlParams.get('date') || new Date().toISOString().split('T')[0];
+
+          let emps = dbState.employees.filter((e: any) => e.status !== 'exited');
+          if (activeUser.role === 'employee') {
+            emps = emps.filter((e: any) => e.id === activeUser.employeeId);
+          }
+
+          const roster = emps.map((emp: any) => {
+            const att = dbState.attendance.find((a: any) => a.employeeId === emp.id && a.date === targetDate);
+            const dept = dbState.departments.find((d: any) => d.id === emp.departmentId);
+            const desig = dbState.designations.find((d: any) => d.id === emp.designationId);
+            const leave = dbState.leaves.find(
+              (l: any) => l.employeeId === emp.id && l.status === 'approved' && l.startDate <= targetDate && l.endDate >= targetDate
+            );
+
+            let status = 'absent';
+            if (leave) {
+              status = 'on_leave';
+            } else if (att) {
+              status = att.status;
+            }
+
             return {
               employeeId: emp.id,
               employeeCode: emp.employeeCode,
               name: `${emp.firstName} ${emp.lastName}`,
-              department: 'Engineering',
+              department: dept?.name || 'General',
+              designation: desig?.name || 'Staff',
               checkInTime: att?.checkInTime,
               checkOutTime: att?.checkOutTime,
               workedHours: att?.workedHours || 0,
               source: att?.source || 'web',
-              status: att ? att.status : 'not_checked_in',
+              status,
+              leaveType: leave?.leaveType,
+              recordId: att?.id,
+              notes: att?.notes,
             };
           });
-          const presentCount = roster.filter((r: any) => r.status === 'present' || r.status === 'late').length;
+
+          const presentCount = roster.filter((r: any) => r.status === 'present').length;
+          const lateCount = roster.filter((r: any) => r.status === 'late').length;
+          const halfDayCount = roster.filter((r: any) => r.status === 'half_day').length;
+          const onLeaveCount = roster.filter((r: any) => r.status === 'on_leave').length;
+          const absentCount = roster.filter((r: any) => r.status === 'absent').length;
+
           return resolve({
-            date: todayStr,
+            date: targetDate,
             summary: {
               total: roster.length,
               present: presentCount,
-              late: roster.filter((r: any) => r.status === 'late').length,
-              halfDay: 0,
-              onLeave: 0,
-              absent: roster.length - presentCount,
-              rate: roster.length > 0 ? `${Math.round((presentCount / roster.length) * 100)}%` : '100%',
+              late: lateCount,
+              halfDay: halfDayCount,
+              onLeave: onLeaveCount,
+              absent: absentCount,
+              rate: roster.length > onLeaveCount ? `${Math.round(((presentCount + lateCount + halfDayCount) / (roster.length - onLeaveCount)) * 100)}%` : '100%',
             },
             roster,
           } as unknown as T);
         }
 
         if (endpoint === '/attendance/check-in' && method === 'POST') {
-          const empId = activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
-          const today = new Date().toISOString().split('T')[0];
-          const newAtt = {
-            id: 'att_' + Date.now(),
-            employeeId: empId,
-            date: today,
-            checkInTime: new Date().toISOString(),
-            status: 'present',
-            workedHours: 0,
-            source: body.isCamera ? 'camera' : 'web',
-            createdAt: new Date().toISOString(),
-          };
-          clientDb.mutate((d) => d.attendance.push(newAtt));
-          addAudit('CREATE', 'ATTENDANCE', `Attendance check-in logged for ${activeUser.name}`, newAtt.id);
-          return resolve({ message: 'Check-in successful! Logged as Present.', record: newAtt } as unknown as T);
+          const empId = body.employeeId || activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+          const targetDate = body.date || new Date().toISOString().split('T')[0];
+          const checkInTimeISO = body.checkInTime
+            ? (body.checkInTime.includes('T') ? body.checkInTime : `${targetDate}T${body.checkInTime}:00.000Z`)
+            : new Date().toISOString();
+
+          let newAtt: any = null;
+          clientDb.mutate((d) => {
+            const existing = d.attendance.find((a: any) => a.employeeId === empId && a.date === targetDate);
+            if (existing) {
+              existing.checkInTime = checkInTimeISO;
+              existing.source = body.isCamera ? 'camera' : 'web';
+              newAtt = existing;
+            } else {
+              newAtt = {
+                id: 'att_' + Date.now(),
+                employeeId: empId,
+                date: targetDate,
+                checkInTime: checkInTimeISO,
+                status: 'present',
+                workedHours: 0,
+                source: body.isCamera ? 'camera' : 'web',
+                locationVerified: !!body.lat,
+                createdAt: new Date().toISOString(),
+              };
+              d.attendance.push(newAtt);
+            }
+          });
+
+          addAudit('CREATE', 'ATTENDANCE', `Attendance check-in logged for ${empId} on ${targetDate}`, newAtt.id);
+          return resolve({ message: `Check-in successful for ${targetDate}! Logged as Present.`, record: newAtt } as unknown as T);
         }
 
         if (endpoint === '/attendance/check-out' && method === 'POST') {
-          const empId = activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+          const empId = body.employeeId || activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+          const targetDate = body.date || new Date().toISOString().split('T')[0];
+          const nowISO = body.checkOutTime
+            ? (body.checkOutTime.includes('T') ? body.checkOutTime : `${targetDate}T${body.checkOutTime}:00.000Z`)
+            : new Date().toISOString();
+
+          let updatedRecord: any = null;
           clientDb.mutate((d) => {
-            const a = d.attendance.find((x: any) => x.employeeId === empId);
+            const a = d.attendance.find((x: any) => x.employeeId === empId && x.date === targetDate);
             if (a) {
-              a.checkOutTime = new Date().toISOString();
-              a.workedHours = 8.5;
+              a.checkOutTime = nowISO;
+              const inMs = new Date(a.checkInTime).getTime();
+              const outMs = new Date(nowISO).getTime();
+              const diffHours = Math.max(0.1, Math.round(((outMs - inMs) / (1000 * 60 * 60)) * 10) / 10);
+              a.workedHours = diffHours;
+              if (diffHours < (d.settings?.halfDayHours || 5)) {
+                a.status = 'half_day';
+              }
+              updatedRecord = a;
+            } else {
+              // Create record with 9am default in time if check-in was not logged earlier
+              const morningIn = `${targetDate}T09:00:00.000Z`;
+              const outMs = new Date(nowISO).getTime();
+              const inMs = new Date(morningIn).getTime();
+              const diffHours = Math.max(0.1, Math.round(((outMs - inMs) / (1000 * 60 * 60)) * 10) / 10);
+              const rec = {
+                id: 'att_' + Date.now(),
+                employeeId: empId,
+                date: targetDate,
+                checkInTime: morningIn,
+                checkOutTime: nowISO,
+                workedHours: diffHours,
+                status: diffHours < (d.settings?.halfDayHours || 5) ? 'half_day' : 'present',
+                source: 'web',
+                createdAt: new Date().toISOString(),
+              };
+              d.attendance.push(rec);
+              updatedRecord = rec;
             }
           });
-          addAudit('UPDATE', 'ATTENDANCE', `Attendance check-out logged for ${activeUser.name}`, empId);
-          return resolve({ message: 'Check-out successful. Total time worked: 8.5 hours.', record: {} } as unknown as T);
+
+          addAudit('UPDATE', 'ATTENDANCE', `Attendance check-out logged for ${empId} on ${targetDate}`, updatedRecord?.id || empId);
+          return resolve({
+            message: `Check-out successful for ${targetDate}. Total time worked: ${updatedRecord?.workedHours || 8} hours.`,
+            record: updatedRecord,
+          } as unknown as T);
+        }
+
+        if (endpoint === '/attendance/record' && method === 'POST') {
+          const { employeeId, date, checkInTime, checkOutTime, status, notes } = body;
+          const targetEmp = dbState.employees.find((e: any) => e.id === employeeId) || dbState.employees[0];
+          const empId = targetEmp?.id || employeeId;
+          const checkInISO = checkInTime.includes('T') ? checkInTime : `${date}T${checkInTime}:00.000Z`;
+          const checkOutISO = checkOutTime ? (checkOutTime.includes('T') ? checkOutTime : `${date}T${checkOutTime}:00.000Z`) : undefined;
+
+          let workedHours = 0;
+          if (checkOutISO) {
+            const inMs = new Date(checkInISO).getTime();
+            const outMs = new Date(checkOutISO).getTime();
+            workedHours = Math.max(0, Math.round(((outMs - inMs) / (1000 * 60 * 60)) * 10) / 10);
+          }
+
+          let finalStatus = status;
+          if (!finalStatus || finalStatus === 'auto') {
+            finalStatus = workedHours > 0 && workedHours < (dbState.settings?.halfDayHours || 5) ? 'half_day' : 'present';
+          }
+
+          let savedRecord: any = null;
+          clientDb.mutate((d) => {
+            const existing = d.attendance.find((x: any) => x.employeeId === empId && x.date === date);
+            if (existing) {
+              existing.checkInTime = checkInISO;
+              existing.checkOutTime = checkOutISO;
+              existing.workedHours = workedHours;
+              existing.status = finalStatus;
+              if (notes !== undefined) existing.notes = notes;
+              savedRecord = existing;
+            } else {
+              savedRecord = {
+                id: 'att_' + Date.now(),
+                employeeId: empId,
+                date,
+                checkInTime: checkInISO,
+                checkOutTime: checkOutISO,
+                workedHours,
+                status: finalStatus,
+                source: 'web',
+                notes: notes || 'Manually recorded date-wise attendance',
+                createdAt: new Date().toISOString(),
+              };
+              d.attendance.push(savedRecord);
+            }
+          });
+
+          addAudit('CREATE', 'ATTENDANCE', `Recorded attendance for ${targetEmp?.firstName || empId} on ${date}`, empId);
+          return resolve({ message: `Attendance for ${date} recorded successfully.`, record: savedRecord } as unknown as T);
+        }
+
+        if (endpoint.startsWith('/attendance/') && method === 'DELETE') {
+          const attId = endpoint.split('/')[2];
+          clientDb.mutate((d) => {
+            d.attendance = d.attendance.filter((x: any) => x.id !== attId);
+          });
+          addAudit('DELETE', 'ATTENDANCE', `Deleted attendance record ${attId}`, attId);
+          return resolve({ message: 'Attendance record deleted successfully.' } as unknown as T);
         }
 
         if (endpoint.startsWith('/attendance/calendar')) {
+          const urlParams = new URLSearchParams(endpoint.includes('?') ? endpoint.split('?')[1] : '');
+          const m = Number(urlParams.get('month')) || new Date().getMonth() + 1;
+          const y = Number(urlParams.get('year')) || new Date().getFullYear();
           return resolve({
-            month: 10,
-            year: 2026,
+            month: m,
+            year: y,
             records: dbState.attendance,
             leaves: dbState.leaves,
             holidays: dbState.holidays,
@@ -607,7 +753,38 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
             const corId = endpoint.split('/')[3];
             clientDb.mutate((d) => {
               const c = d.corrections.find((x: any) => x.id === corId);
-              if (c) c.status = body.action === 'approve' ? 'approved' : 'rejected';
+              if (c) {
+                c.status = body.action === 'approve' ? 'approved' : 'rejected';
+                if (body.action === 'approve') {
+                  const [inH, inM] = c.requestedCheckIn.split(':').map(Number);
+                  const [outH, outM] = c.requestedCheckOut.split(':').map(Number);
+                  const checkInISO = `${c.date}T${String(inH).padStart(2, '0')}:${String(inM).padStart(2, '0')}:00.000Z`;
+                  const checkOutISO = `${c.date}T${String(outH).padStart(2, '0')}:${String(outM).padStart(2, '0')}:00.000Z`;
+                  const diffHours = Math.max(0, (outH * 60 + outM - (inH * 60 + inM)) / 60);
+
+                  const existing = d.attendance.find((x: any) => x.employeeId === c.employeeId && x.date === c.date);
+                  if (existing) {
+                    existing.checkInTime = checkInISO;
+                    existing.checkOutTime = checkOutISO;
+                    existing.workedHours = Math.round(diffHours * 10) / 10;
+                    existing.status = diffHours < 5 ? 'half_day' : 'present';
+                    existing.notes = `Approved correction: ${c.reason}`;
+                  } else {
+                    d.attendance.push({
+                      id: 'att_' + Date.now(),
+                      employeeId: c.employeeId,
+                      date: c.date,
+                      checkInTime: checkInISO,
+                      checkOutTime: checkOutISO,
+                      workedHours: Math.round(diffHours * 10) / 10,
+                      status: diffHours < 5 ? 'half_day' : 'present',
+                      source: 'web',
+                      notes: `Created via approved correction: ${c.reason}`,
+                      createdAt: new Date().toISOString(),
+                    });
+                  }
+                }
+              }
             });
             addAudit('APPROVE', 'ATTENDANCE', `Attendance correction ${body.action}d`, corId);
             return resolve({ message: `Correction ${body.action}d successfully` } as unknown as T);
@@ -803,13 +980,25 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
         }
 
         if (endpoint.startsWith('/analytics/employee')) {
+          const empId = activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+          const targetEmp = dbState.employees.find((e: any) => e.id === empId) || dbState.employees[0];
+          const todayDate = new Date().toISOString().split('T')[0];
+          const todayRecord = dbState.attendance.find((a: any) => a.employeeId === empId && a.date === todayDate);
+          const todayLeave = dbState.leaves.find(
+            (l: any) => l.employeeId === empId && l.status === 'approved' && l.startDate <= todayDate && l.endDate >= todayDate
+          );
+
           return resolve({
-            employee: dbState.employees[0],
+            employee: targetEmp,
             todayStatus: {
-              hasCheckedIn: !!dbState.attendance.find((a: any) => a.employeeId === (activeUser.employeeId || 'emp_1')),
-              status: 'present',
+              hasCheckedIn: !!todayRecord,
+              hasCheckedOut: !!todayRecord?.checkOutTime,
+              checkInTime: todayRecord?.checkInTime,
+              checkOutTime: todayRecord?.checkOutTime,
+              status: todayLeave ? 'on_leave' : (todayRecord ? todayRecord.status : 'not_checked_in'),
+              leaveType: todayLeave?.leaveType,
             },
-            weeklyStats: { hoursWorked: 40, targetHours: 40, completionRate: 100 },
+            weeklyStats: { hoursWorked: todayRecord?.workedHours || 8, targetHours: 40, completionRate: 85 },
             monthlyStats: { lateCount: 0, warningIssued: false },
             leaveBalance: { annual: 14, sick: 8, casual: 9 },
             lastPayslip: null,
@@ -1014,9 +1203,16 @@ export const api = {
     if (params?.year) q.set('year', String(params.year));
     return apiRequest<any>(`/attendance/calendar?${q.toString()}`);
   },
-  checkIn: (data: { isCamera?: boolean; lat?: number; lng?: number; accuracy?: number; faceDetected?: boolean; employeeId?: string }) =>
+  checkIn: (data: { isCamera?: boolean; lat?: number; lng?: number; accuracy?: number; faceDetected?: boolean; employeeId?: string; date?: string; checkInTime?: string }) =>
     apiRequest<{ message: string; record: any }>('/attendance/check-in', { method: 'POST', body: JSON.stringify(data) }),
-  checkOut: (employeeId?: string) => apiRequest<{ message: string; record: any }>('/attendance/check-out', { method: 'POST', body: JSON.stringify({ employeeId }) }),
+  checkOut: (params?: string | { employeeId?: string; date?: string; checkOutTime?: string }) => {
+    const body = typeof params === 'string' ? { employeeId: params } : (params || {});
+    return apiRequest<{ message: string; record: any }>('/attendance/check-out', { method: 'POST', body: JSON.stringify(body) });
+  },
+  recordAttendance: (data: { employeeId: string; date: string; checkInTime: string; checkOutTime?: string; status?: string; notes?: string }) =>
+    apiRequest<{ message: string; record: any }>('/attendance/record', { method: 'POST', body: JSON.stringify(data) }),
+  deleteAttendance: (id: string) =>
+    apiRequest<{ message: string }>(`/attendance/${id}`, { method: 'DELETE' }),
   getCorrections: () => apiRequest<any[]>('/attendance/corrections'),
   requestCorrection: (data: { date: string; requestedCheckIn: string; requestedCheckOut: string; reason: string }) =>
     apiRequest<any>('/attendance/corrections', { method: 'POST', body: JSON.stringify(data) }),

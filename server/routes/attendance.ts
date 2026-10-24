@@ -135,17 +135,19 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     return res.status(400).json({ error: 'No associated employee record found for check-in.' });
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = (req.body.date as string) || new Date().toISOString().split('T')[0];
   const existing = state.attendance.find((a) => a.employeeId === employeeId && a.date === today);
   if (existing) {
     return res.status(409).json({
-      error: 'You have already checked in today.',
+      error: `Attendance is already recorded for ${today}.`,
       existingRecord: existing,
     });
   }
 
-  const { isCamera, lat, lng, accuracy, faceDetected } = req.body;
-  const nowISO = new Date().toISOString();
+  const { isCamera, lat, lng, accuracy, faceDetected, checkInTime } = req.body;
+  const nowISO = checkInTime
+    ? (checkInTime.includes('T') ? checkInTime : `${today}T${checkInTime}:00.000Z`)
+    : new Date().toISOString();
 
   let source: 'web' | 'camera' = 'web';
   let locationVerified = false;
@@ -214,7 +216,7 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     action: 'CREATE',
     entity: 'ATTENDANCE',
     entityId: record.id,
-    details: `Attendance check-in logged via ${source} (Status: ${initialStatus}, Time: ${new Date().toLocaleTimeString()})`,
+    details: `Attendance check-in logged via ${source} for date ${today} (Status: ${initialStatus})`,
     afterState: record,
   });
 
@@ -230,28 +232,34 @@ attendanceRouter.post('/check-out', authenticate, (req: AuthenticatedRequest, re
   const state = db.get();
 
   let employeeId = user.employeeId;
-  if (!employeeId && (user.role === 'admin' || user.role === 'hr')) {
-    employeeId = (req.body.employeeId as string) || state.employees[0]?.id;
+  if (req.body.employeeId) {
+    employeeId = req.body.employeeId;
+  } else if (!employeeId && (user.role === 'admin' || user.role === 'hr')) {
+    employeeId = state.employees[0]?.id;
   }
 
   if (!employeeId) {
     return res.status(400).json({ error: 'No associated employee record found.' });
   }
 
-  const today = new Date().toISOString().split('T')[0];
-  const record = state.attendance.find((a) => a.employeeId === employeeId && a.date === today);
+  const targetDate = (req.body.date as string) || new Date().toISOString().split('T')[0];
+  const record = state.attendance.find((a) => a.employeeId === employeeId && a.date === targetDate);
   if (!record) {
-    return res.status(404).json({ error: 'No active check-in record found for today.' });
+    return res.status(404).json({ error: `No active check-in record found for date ${targetDate}.` });
   }
 
   if (record.checkOutTime) {
-    return res.status(400).json({ error: 'You have already checked out for today.' });
+    return res.status(400).json({ error: `You have already checked out for date ${targetDate}.` });
   }
 
-  const nowISO = new Date().toISOString();
+  const nowISO = req.body.checkOutTime
+    ? (req.body.checkOutTime.includes('T') ? req.body.checkOutTime : `${targetDate}T${req.body.checkOutTime}:00.000Z`)
+    : new Date().toISOString();
+
   const checkInDate = new Date(record.checkInTime);
   const checkOutDate = new Date(nowISO);
-  const diffHours = Math.round(((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60)) * 10) / 10;
+  const diffMs = Math.max(0, checkOutDate.getTime() - checkInDate.getTime());
+  const diffHours = Math.max(0.1, Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10);
 
   // Half-day evaluation: worked duration under configured half-day hours (e.g. 5h)
   let finalStatus = record.status;
@@ -273,13 +281,108 @@ attendanceRouter.post('/check-out', authenticate, (req: AuthenticatedRequest, re
     action: 'UPDATE',
     entity: 'ATTENDANCE',
     entityId: record.id,
-    details: `Attendance check-out logged (${diffHours} hrs worked. Final status: ${finalStatus})`,
+    details: `Attendance check-out logged (${diffHours} hrs worked. Final status: ${finalStatus}) for date ${targetDate}`,
   });
 
   res.json({
     message: `Check-out successful. Total time worked: ${diffHours} hours (${finalStatus === 'half_day' ? 'Half-Day' : 'Complete'}).`,
     record: db.get().attendance.find((x) => x.id === record.id),
   });
+});
+
+// POST /api/attendance/record (Direct manual date-wise record with in and out time)
+attendanceRouter.post('/record', authenticate, requireRole(['admin', 'hr']), (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, date, checkInTime, checkOutTime, status, notes } = req.body;
+  if (!employeeId || !date || !checkInTime) {
+    return res.status(400).json({ error: 'Employee, date, and check-in time are required.' });
+  }
+
+  const state = db.get();
+  const emp = state.employees.find((e) => e.id === employeeId);
+  if (!emp) {
+    return res.status(404).json({ error: 'Employee not found.' });
+  }
+
+  const checkInISO = checkInTime.includes('T') ? checkInTime : `${date}T${checkInTime}:00.000Z`;
+  const checkOutISO = checkOutTime ? (checkOutTime.includes('T') ? checkOutTime : `${date}T${checkOutTime}:00.000Z`) : undefined;
+
+  let workedHours = 0;
+  if (checkOutISO) {
+    const inMs = new Date(checkInISO).getTime();
+    const outMs = new Date(checkOutISO).getTime();
+    workedHours = Math.max(0, Math.round(((outMs - inMs) / (1000 * 60 * 60)) * 10) / 10);
+  }
+
+  let finalStatus = status;
+  if (!finalStatus || finalStatus === 'auto') {
+    const autoStatus = evaluateCheckInStatus(checkInISO, state.settings.officeStart, state.settings.graceMinutes);
+    finalStatus = workedHours > 0 && workedHours < state.settings.halfDayHours ? 'half_day' : autoStatus;
+  }
+
+  const existing = state.attendance.find((a) => a.employeeId === employeeId && a.date === date);
+
+  db.update((draft) => {
+    if (existing) {
+      const r = draft.attendance.find((a) => a.id === existing.id);
+      if (r) {
+        r.checkInTime = checkInISO;
+        r.checkOutTime = checkOutISO;
+        r.workedHours = workedHours;
+        r.status = finalStatus;
+        if (notes !== undefined) r.notes = notes;
+      }
+    } else {
+      draft.attendance.push({
+        id: 'att_' + Date.now(),
+        employeeId,
+        date,
+        checkInTime: checkInISO,
+        checkOutTime: checkOutISO,
+        workedHours,
+        status: finalStatus,
+        source: 'web',
+        notes: notes || 'Manually recorded date-wise attendance',
+        createdAt: new Date().toISOString(),
+      });
+    }
+  });
+
+  logAudit({
+    req,
+    action: existing ? 'UPDATE' : 'CREATE',
+    entity: 'ATTENDANCE',
+    entityId: existing?.id || 'manual',
+    details: `Manual attendance recorded for ${emp.firstName} ${emp.lastName} on ${date} (In: ${checkInTime}, Out: ${checkOutTime || 'None'}, Status: ${finalStatus})`,
+  });
+
+  res.json({
+    message: `Attendance for ${emp.firstName} ${emp.lastName} on ${date} recorded successfully.`,
+    record: db.get().attendance.find((a) => a.employeeId === employeeId && a.date === date),
+  });
+});
+
+// DELETE /api/attendance/:id
+attendanceRouter.delete('/:id', authenticate, requireRole(['admin', 'hr']), (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const state = db.get();
+  const record = state.attendance.find((a) => a.id === id);
+  if (!record) {
+    return res.status(404).json({ error: 'Attendance record not found.' });
+  }
+
+  db.update((draft) => {
+    draft.attendance = draft.attendance.filter((a) => a.id !== id);
+  });
+
+  logAudit({
+    req,
+    action: 'DELETE',
+    entity: 'ATTENDANCE',
+    entityId: id,
+    details: `Deleted attendance record ${id} for date ${record.date}`,
+  });
+
+  res.json({ message: 'Attendance record deleted successfully.' });
 });
 
 // GET /api/attendance/corrections (List correction requests)

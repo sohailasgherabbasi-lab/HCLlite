@@ -21,6 +21,23 @@ interface EmployeeDashboardProps {
   onNavigateToPayslips: () => void;
 }
 
+const formatTime = (timeStr?: string): string => {
+  if (!timeStr) return '—';
+  if (/^\d{2}:\d{2}(:\d{2})?$/.test(timeStr)) {
+    const [h, m] = timeStr.split(':');
+    const d = new Date();
+    d.setHours(Number(h), Number(m));
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  try {
+    const d = new Date(timeStr);
+    if (isNaN(d.getTime())) return timeStr;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return timeStr;
+  }
+};
+
 export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   onOpenSmartLeave,
   onOpenCameraAttendance,
@@ -168,13 +185,13 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
             <div className="flex justify-between">
               <span>Punch In:</span>
               <span className="font-semibold text-neutral-900 dark:text-white tabular-nums">
-                {today.checkInTime ? new Date(today.checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                {formatTime(today.checkInTime)}
               </span>
             </div>
             <div className="flex justify-between">
               <span>Punch Out:</span>
               <span className="font-semibold text-neutral-900 dark:text-white tabular-nums">
-                {today.checkOutTime ? new Date(today.checkOutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                {formatTime(today.checkOutTime)}
               </span>
             </div>
           </div>
