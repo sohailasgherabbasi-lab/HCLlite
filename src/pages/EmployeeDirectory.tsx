@@ -23,6 +23,13 @@ import {
   MapPin,
   TrendingDown,
   ScanFace,
+  Key,
+  Trash2,
+  Lock,
+  Copy,
+  Check,
+  EyeOff,
+  ShieldAlert,
 } from 'lucide-react';
 import { Employee, Department, Designation } from '../types/index.ts';
 import { FaceEnrollmentModal } from '../components/employee/FaceEnrollmentModal.tsx';
@@ -46,6 +53,18 @@ export const EmployeeDirectory: React.FC = () => {
 
   // Biometric Face ID Enrollment Modal
   const [enrollingEmp, setEnrollingEmp] = useState<Employee | null>(null);
+
+  // Reset Password Modal
+  const [resetPassEmp, setResetPassEmp] = useState<Employee | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [resettingPass, setResettingPass] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState<{ success: boolean; message: string; tempPass?: string } | null>(null);
+  const [showPassPlain, setShowPassPlain] = useState(false);
+  const [copiedPass, setCopiedPass] = useState(false);
+
+  // Delete Employee Confirmation Modal
+  const [deletingEmp, setDeletingEmp] = useState<Employee | null>(null);
+  const [deletingEmployeeLoading, setDeletingEmployeeLoading] = useState(false);
 
   // Employee 360 Drawer
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
@@ -148,6 +167,66 @@ export const EmployeeDirectory: React.FC = () => {
       await loadData();
     } catch (err: any) {
       alert(err.message || 'Failed to update contact info');
+    }
+  };
+
+  const generateRandomPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let pass = '';
+    for (let i = 0; i < 9; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return 'Emp#' + pass;
+  };
+
+  const openResetPasswordModal = (emp: Employee) => {
+    setResetPassEmp(emp);
+    setResetPasswordValue(generateRandomPassword());
+    setResetFeedback(null);
+    setShowPassPlain(true);
+    setCopiedPass(false);
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPassEmp || !resetPasswordValue.trim()) return;
+    setResettingPass(true);
+    try {
+      await api.resetEmployeePassword(resetPassEmp.id, resetPasswordValue.trim());
+      setResetFeedback({
+        success: true,
+        message: `Password successfully updated for ${resetPassEmp.firstName} ${resetPassEmp.lastName}!`,
+        tempPass: resetPasswordValue.trim(),
+      });
+    } catch (err: any) {
+      setResetFeedback({
+        success: false,
+        message: err.message || 'Failed to reset employee password.',
+      });
+    } finally {
+      setResettingPass(false);
+    }
+  };
+
+  const openDeleteModal = (emp: Employee) => {
+    setDeletingEmp(emp);
+  };
+
+  const handleDeleteEmployee = async () => {
+    if (!deletingEmp) return;
+    setDeletingEmployeeLoading(true);
+    try {
+      await api.deleteEmployee(deletingEmp.id);
+      if (selectedEmpId === deletingEmp.id) {
+        setSelectedEmpId(null);
+        setEmp360(null);
+      }
+      setDeletingEmp(null);
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete employee.');
+    } finally {
+      setDeletingEmployeeLoading(false);
     }
   };
 
@@ -399,6 +478,24 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
                       >
                         360 Profile
                       </button>
+                      {canManage && (
+                        <>
+                          <button
+                            onClick={() => openResetPasswordModal(emp)}
+                            className="p-1.5 bg-neutral-100 hover:bg-amber-50 dark:bg-neutral-800 dark:hover:bg-amber-950/40 text-neutral-600 hover:text-amber-600 dark:text-neutral-300 dark:hover:text-amber-400 rounded-lg transition-colors cursor-pointer"
+                            title="Reset Employee Password"
+                          >
+                            <Key className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => openDeleteModal(emp)}
+                            className="p-1.5 bg-neutral-100 hover:bg-rose-50 dark:bg-neutral-800 dark:hover:bg-rose-950/40 text-neutral-600 hover:text-rose-600 dark:text-neutral-300 dark:hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+                            title="Delete Employee"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -428,10 +525,30 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {canManage && emp360 && (
+                  <>
+                    <button
+                      onClick={() => openResetPasswordModal(emp360)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/40 border border-amber-200 dark:border-amber-800 rounded-lg cursor-pointer transition-colors"
+                      title="Reset Employee Password"
+                    >
+                      <Key className="w-3.5 h-3.5" />
+                      <span>Reset Password</span>
+                    </button>
+                    <button
+                      onClick={() => openDeleteModal(emp360)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 border border-rose-200 dark:border-rose-800 rounded-lg cursor-pointer transition-colors"
+                      title="Delete Employee Record"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={() => setShowContactModal(true)}
-                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 rounded-lg cursor-pointer"
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 rounded-lg cursor-pointer"
                   title="Update Phone & Address"
                 >
                   <Edit2 className="w-3.5 h-3.5" />
@@ -966,6 +1083,271 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
             }
           }}
         />
+      )}
+
+      {/* Reset Password Modal */}
+      {resetPassEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100 dark:border-neutral-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 rounded-xl">
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-neutral-900 dark:text-white">
+                    Reset Employee Password
+                  </h3>
+                  <p className="text-[11px] text-neutral-500 font-mono">
+                    {resetPassEmp.firstName} {resetPassEmp.lastName} ({resetPassEmp.employeeCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setResetPassEmp(null);
+                  setResetFeedback(null);
+                }}
+                className="p-1 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {resetFeedback?.success ? (
+              <div className="space-y-4">
+                <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 rounded-xl space-y-2.5">
+                  <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>Password Reset Successful!</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                    The account for <strong>{resetPassEmp.email}</strong> now uses the new credentials below:
+                  </p>
+                  <div className="flex items-center justify-between bg-white dark:bg-neutral-800 border border-emerald-300 dark:border-emerald-800 rounded-lg p-2.5 font-mono text-xs text-neutral-900 dark:text-white">
+                    <span className="font-bold tracking-wider">{resetFeedback.tempPass}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (resetFeedback.tempPass) {
+                          navigator.clipboard.writeText(resetFeedback.tempPass);
+                          setCopiedPass(true);
+                          setTimeout(() => setCopiedPass(false), 2000);
+                        }
+                      }}
+                      className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900 dark:hover:bg-emerald-800 text-emerald-800 dark:text-emerald-200 rounded text-[11px] font-sans flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedPass ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-neutral-500 pt-1">
+                    Please provide this new password to {resetPassEmp.firstName}. They will be prompted to change it upon first logging in.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetPassEmp(null);
+                    setResetFeedback(null);
+                  }}
+                  className="w-full py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:hover:bg-neutral-200 text-white dark:text-neutral-900 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                {resetFeedback && !resetFeedback.success && (
+                  <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 rounded-xl text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{resetFeedback.message}</span>
+                  </div>
+                )}
+
+                {/* Employee Info Box */}
+                <div className="p-3 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-700/60 text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Employee:</span>
+                    <span className="font-semibold text-neutral-900 dark:text-white">
+                      {resetPassEmp.firstName} {resetPassEmp.lastName}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Login Email:</span>
+                    <span className="font-mono text-neutral-900 dark:text-white">{resetPassEmp.email}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Department:</span>
+                    <span className="text-neutral-700 dark:text-neutral-300">{resetPassEmp.departmentName || 'General'}</span>
+                  </div>
+                </div>
+
+                {/* Password Input */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                      New Password
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setResetPasswordValue(generateRandomPassword())}
+                      className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Generate Random</span>
+                    </button>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type={showPassPlain ? 'text' : 'password'}
+                      required
+                      value={resetPasswordValue}
+                      onChange={(e) => setResetPasswordValue(e.target.value)}
+                      placeholder="Enter new password (min 4 characters)..."
+                      className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl pl-3 pr-10 py-2.5 text-xs text-neutral-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassPlain((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer"
+                      title={showPassPlain ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassPlain ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-neutral-500">
+                    The employee will be required to change this password upon their subsequent login.
+                  </p>
+                </div>
+
+                {/* Modal Actions */}
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetPassEmp(null);
+                      setResetFeedback(null);
+                    }}
+                    className="px-4 py-2 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resettingPass || !resetPasswordValue.trim()}
+                    className="flex items-center gap-1.5 px-5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+                  >
+                    {resettingPass ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Updating Password...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Key className="w-3.5 h-3.5" />
+                        <span>Save & Reset Password</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Employee Confirmation Modal */}
+      {deletingEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100 dark:border-neutral-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 rounded-xl">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-neutral-900 dark:text-white">
+                    Delete Employee Record
+                  </h3>
+                  <p className="text-[11px] text-neutral-500 font-mono">
+                    {deletingEmp.firstName} {deletingEmp.lastName} ({deletingEmp.employeeCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDeletingEmp(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Warning Message */}
+            <div className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60 rounded-xl space-y-2.5 text-xs text-rose-900 dark:text-rose-200">
+              <div className="flex items-center gap-2 font-bold text-rose-700 dark:text-rose-400">
+                <ShieldAlert className="w-4 h-4 shrink-0" />
+                <span>Permanent & Irreversible Deletion</span>
+              </div>
+              <p className="leading-relaxed">
+                Are you sure you want to delete <strong>{deletingEmp.firstName} {deletingEmp.lastName}</strong>?
+              </p>
+              <div className="text-[11px] text-rose-800 dark:text-rose-300 space-y-1 bg-white/70 dark:bg-neutral-900/70 p-2.5 rounded-lg border border-rose-200/60 dark:border-rose-900/40">
+                <p className="font-semibold">This action will cascade and delete:</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>User account login & authentication credentials</li>
+                  <li>Biometric Face ID profile template</li>
+                  <li>All attendance logs and punch history</li>
+                  <li>Leave records, approvals, and balances</li>
+                  <li>Payroll compensation & payslip history</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+              <button
+                type="button"
+                onClick={() => setDeletingEmp(null)}
+                disabled={deletingEmployeeLoading}
+                className="px-4 py-2 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteEmployee}
+                disabled={deletingEmployeeLoading}
+                className="flex items-center gap-1.5 px-5 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                {deletingEmployeeLoading ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting Employee...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Permanently Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

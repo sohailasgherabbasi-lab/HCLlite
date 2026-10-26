@@ -615,3 +615,103 @@ employeesRouter.delete('/:id/face', authenticate, (req: AuthenticatedRequest, re
   });
 });
 
+// POST /api/employees/:id/reset-password (Admin/HR resets employee password)
+employeesRouter.post('/:id/reset-password', authenticate, requireRole(['admin', 'hr']), (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+  const user = req.user!;
+  const state = db.get();
+  const emp = state.employees.find((e) => e.id === id);
+
+  if (!emp) {
+    return res.status(404).json({ error: 'Employee not found.' });
+  }
+
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 4) {
+    return res.status(400).json({ error: 'New password must be at least 4 characters long.' });
+  }
+
+  const cleanPass = newPassword.trim();
+  const passHash = hashPassword(cleanPass);
+
+  db.update((draft) => {
+    let u = draft.users.find(
+      (x) => x.id === emp.userId || x.employeeId === emp.id || x.email.toLowerCase() === emp.email.toLowerCase()
+    );
+
+    if (u) {
+      u.passwordHash = passHash;
+      u.mustChangePassword = true;
+    } else {
+      // Create user record if none linked yet
+      const newUserId = 'usr_' + emp.id;
+      draft.users.push({
+        id: newUserId,
+        name: `${emp.firstName} ${emp.lastName}`,
+        email: emp.email.toLowerCase(),
+        passwordHash: passHash,
+        role: 'employee',
+        employeeId: emp.id,
+        isActive: true,
+        mustChangePassword: true,
+        createdAt: new Date().toISOString(),
+      });
+      const targetEmp = draft.employees.find((e) => e.id === emp.id);
+      if (targetEmp) {
+        targetEmp.userId = newUserId;
+      }
+    }
+  });
+
+  logAudit({
+    req,
+    action: 'UPDATE',
+    entity: 'USER',
+    entityId: emp.id,
+    details: `Password reset by ${user.name} for employee ${emp.firstName} ${emp.lastName} (${emp.employeeCode})`,
+  });
+
+  res.json({
+    message: `Password successfully reset for ${emp.firstName} ${emp.lastName}.`,
+    employeeCode: emp.employeeCode,
+    email: emp.email,
+  });
+});
+
+// DELETE /api/employees/:id (Admin/HR permanently deletes employee and cascades records)
+employeesRouter.delete('/:id', authenticate, requireRole(['admin', 'hr']), (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const user = req.user!;
+  const state = db.get();
+  const emp = state.employees.find((e) => e.id === id);
+
+  if (!emp) {
+    return res.status(404).json({ error: 'Employee not found.' });
+  }
+
+  db.update((draft) => {
+    // Delete employee
+    draft.employees = draft.employees.filter((e) => e.id !== id);
+    // Delete associated user account
+    draft.users = draft.users.filter((u) => u.id !== emp.userId && u.employeeId !== id && u.email.toLowerCase() !== emp.email.toLowerCase());
+    // Delete attendance records
+    draft.attendance = draft.attendance.filter((a) => a.employeeId !== id);
+    // Delete leave requests
+    draft.leaves = draft.leaves.filter((l) => l.employeeId !== id);
+    // Delete corrections
+    draft.corrections = draft.corrections.filter((c) => c.employeeId !== id);
+  });
+
+  logAudit({
+    req,
+    action: 'DELETE',
+    entity: 'EMPLOYEE',
+    entityId: id,
+    details: `Employee ${emp.firstName} ${emp.lastName} (${emp.employeeCode}) and all linked records permanently deleted by ${user.name}`,
+  });
+
+  res.json({
+    message: `Employee ${emp.firstName} ${emp.lastName} (${emp.employeeCode}) has been permanently deleted.`,
+  });
+});
+

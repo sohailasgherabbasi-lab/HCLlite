@@ -533,6 +533,60 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
             return resolve({ message: 'Face ID profile removed.', employee: updatedEmp } as unknown as T);
           }
 
+          if (endpoint.includes('/reset-password') && method === 'POST') {
+            const empId = endpoint.split('/')[2];
+            let foundEmp: any = null;
+            clientDb.mutate((d) => {
+              const emp = d.employees.find((x: any) => x.id === empId);
+              foundEmp = emp;
+              if (emp) {
+                const u = d.users.find(
+                  (x: any) => x.id === emp.userId || x.employeeId === emp.id || x.email.toLowerCase() === emp.email.toLowerCase()
+                );
+                if (u) {
+                  u.password = body.newPassword;
+                  u.passwordHash = body.newPassword;
+                  u.mustChangePassword = true;
+                } else {
+                  const newUserId = 'usr_' + emp.id;
+                  d.users.push({
+                    id: newUserId,
+                    name: `${emp.firstName} ${emp.lastName}`,
+                    email: emp.email.toLowerCase(),
+                    role: 'employee',
+                    employeeId: emp.id,
+                    password: body.newPassword,
+                    passwordHash: body.newPassword,
+                    isActive: true,
+                    mustChangePassword: true,
+                    createdAt: new Date().toISOString(),
+                  });
+                  emp.userId = newUserId;
+                }
+              }
+            });
+            addAudit('UPDATE', 'USER', `Password reset for employee ${foundEmp?.firstName || empId}`, empId);
+            return resolve({ message: 'Password reset successfully' } as unknown as T);
+          }
+
+          if (endpoint.includes('/employees/') && method === 'DELETE') {
+            const empId = endpoint.split('/')[2];
+            let empName = empId;
+            clientDb.mutate((d) => {
+              const target = d.employees.find((x: any) => x.id === empId);
+              if (target) {
+                empName = `${target.firstName} ${target.lastName} (${target.employeeCode})`;
+              }
+              d.employees = d.employees.filter((x: any) => x.id !== empId);
+              d.users = d.users.filter((x: any) => x.employeeId !== empId && (!target || x.id !== target.userId));
+              d.attendance = d.attendance.filter((x: any) => x.employeeId !== empId);
+              d.leaves = d.leaves.filter((x: any) => x.employeeId !== empId);
+              d.payslips = d.payslips.filter((x: any) => x.employeeId !== empId);
+            });
+            addAudit('DELETE', 'EMPLOYEE', `Permanently deleted employee: ${empName}`, empId);
+            return resolve({ message: `Employee ${empName} deleted successfully` } as unknown as T);
+          }
+
           if (endpoint.includes('/employees/') && method === 'GET') {
             const id = endpoint.split('/')[2];
             const emp = dbState.employees.find((e: any) => e.id === id) || dbState.employees[0];
@@ -1312,6 +1366,13 @@ export const api = {
     apiRequest<{ message: string; employee: any }>(`/employees/${id}/enroll-face`, { method: 'POST', body: JSON.stringify(data) }),
   deleteFace: (id: string) =>
     apiRequest<{ message: string; employee: any }>(`/employees/${id}/face`, { method: 'DELETE' }),
+  deleteEmployee: (id: string) =>
+    apiRequest<{ message: string }>(`/employees/${id}`, { method: 'DELETE' }),
+  resetEmployeePassword: (id: string, newPassword: string) =>
+    apiRequest<{ message: string; email?: string; employeeCode?: string }>(`/employees/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword }),
+    }),
   csvDryRun: (csvText: string) => apiRequest<any>('/employees/csv-dryrun', { method: 'POST', body: JSON.stringify({ csvText }) }),
   csvImport: (rows: any[]) => apiRequest<any>('/employees/csv-import', { method: 'POST', body: JSON.stringify({ rows }) }),
 

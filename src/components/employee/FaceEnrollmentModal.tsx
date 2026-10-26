@@ -333,10 +333,10 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-xl w-full overflow-hidden shadow-2xl flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-2 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl sm:rounded-3xl max-w-5xl w-full max-h-[92vh] overflow-hidden shadow-2xl flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 rounded-xl">
               <ScanFace className="w-5 h-5" />
@@ -364,310 +364,377 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="p-5 space-y-4">
-          {/* Feedback message banner */}
-          {feedback && (
-            <div
-              className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                feedback.type === 'success'
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
-                  : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900'
-              }`}
-            >
-              {feedback.type === 'success' ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-              )}
-              <span>{feedback.message}</span>
-            </div>
-          )}
-
-          {/* If already has enrolled face, show mini badge & removal option */}
-          {employee.faceEnrolled && !capturedPhoto && (
-            <div className="flex items-center justify-between p-3 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-700/60">
-              <div className="flex items-center gap-3">
-                {employee.facePhotoUrl ? (
-                  <img
-                    src={employee.facePhotoUrl}
-                    alt={empName}
-                    className="w-11 h-11 rounded-lg object-cover border border-neutral-300 dark:border-neutral-700 shadow-xs"
-                  />
-                ) : (
-                  <div className="w-11 h-11 rounded-lg bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold">
-                    ID
-                  </div>
-                )}
-                <div>
-                  <span className="text-xs font-semibold text-neutral-900 dark:text-white block">
-                    Current Enrolled Biometric Record
-                  </span>
-                  <span className="text-[11px] text-neutral-400">
-                    Registered: {employee.faceEnrolledAt ? new Date(employee.faceEnrolledAt).toLocaleDateString() : 'Active'}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleDeleteFace}
-                disabled={deleting}
-                className="px-2.5 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-rose-200 dark:border-rose-900"
-                title="Remove Face Record"
+        {/* Modal Body: Left Camera/Preview Viewport & Right Vertical Action Panel */}
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+          {/* LEFT COLUMN: Camera Feed / Captured Photo Review */}
+          <div className="flex-1 min-w-0 p-3 sm:p-4 flex flex-col justify-between overflow-y-auto space-y-3">
+            {/* Feedback message banner */}
+            {feedback && (
+              <div
+                className={`p-3 rounded-xl text-xs flex items-center gap-2 border shrink-0 ${
+                  feedback.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
+                    : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900'
+                }`}
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>{deleting ? 'Removing...' : 'Delete'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Viewfinder or Captured Preview */}
-          {!capturedPhoto ? (
-            <div className="space-y-2">
-              {/* Controls bar */}
-              <div className="flex items-center justify-between text-xs text-neutral-500">
-                {videoDevices.length > 1 ? (
-                  <div className="flex items-center gap-1">
-                    <SwitchCamera className="w-3.5 h-3.5 text-indigo-500" />
-                    <select
-                      value={selectedDeviceId}
-                      onChange={(e) => {
-                        setSelectedDeviceId(e.target.value);
-                        startCamera(e.target.value);
-                      }}
-                      className="bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-0.5 text-xs text-neutral-800 dark:text-neutral-200"
-                    >
-                      {videoDevices.map((d, i) => (
-                        <option key={d.deviceId || i} value={d.deviceId}>
-                          {d.label || `Camera ${i + 1}`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                {feedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
                 ) : (
-                  <span className="text-[11px] flex items-center gap-1">
-                    <Camera className="w-3 h-3 text-neutral-400" />
-                    Live Camera Feed
-                  </span>
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
                 )}
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsMirrored((m) => !m)}
-                    className="p-1 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded flex items-center gap-1 cursor-pointer"
-                  >
-                    <FlipHorizontal className="w-3.5 h-3.5" />
-                    <span>Mirror</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => startCamera()}
-                    className="p-1 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded flex items-center gap-1 cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Reset</span>
-                  </button>
-                </div>
+                <span>{feedback.message}</span>
               </div>
+            )}
 
-              {/* Viewport Frame */}
-              <div className="relative aspect-4/3 bg-neutral-950 rounded-2xl overflow-hidden flex items-center justify-center border border-neutral-800 shadow-inner">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className={`w-full h-full object-cover ${isMirrored ? 'scale-x-[-1]' : ''}`}
-                />
-                <canvas ref={canvasRef} className="hidden" />
-
-                {/* Biometric Oval Guide Overlay */}
-                <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4">
-                  {/* Outer Vignette Darkening */}
-                  <div className="absolute inset-0 bg-radial from-transparent via-black/25 to-black/60 pointer-events-none" />
-
-                  {/* Face Alignment Oval */}
-                  <div
-                    className={`relative w-44 sm:w-52 h-56 sm:h-64 rounded-[50%] border-2 transition-colors duration-300 ${
-                      quality?.isAcceptable
-                        ? 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.35)]'
-                        : 'border-indigo-400/80 shadow-[0_0_15px_rgba(99,102,241,0.25)]'
-                    }`}
-                  >
-                    {/* Crosshairs & Alignment Marks */}
-                    <div className="absolute top-1/2 left-0 right-0 h-px border-t border-dashed border-white/20" />
-                    <div className="absolute top-0 bottom-0 left-1/2 w-px border-l border-dashed border-white/20" />
-
-                    {/* Eye Level Line */}
-                    <div className="absolute top-[38%] left-3 right-3 flex items-center justify-between text-[9px] text-white/50 px-2 font-mono">
-                      <span>👁 Eye Level</span>
-                      <span>👁</span>
+            {!capturedPhoto ? (
+              <div className="space-y-2 flex-1 flex flex-col justify-between">
+                {/* Controls bar above viewfinder */}
+                <div className="flex items-center justify-between text-xs text-neutral-500 shrink-0">
+                  {videoDevices.length > 1 ? (
+                    <div className="flex items-center gap-1.5">
+                      <SwitchCamera className="w-3.5 h-3.5 text-indigo-500" />
+                      <select
+                        value={selectedDeviceId}
+                        onChange={(e) => {
+                          setSelectedDeviceId(e.target.value);
+                          startCamera(e.target.value);
+                        }}
+                        className="bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-2.5 py-1 text-xs text-neutral-800 dark:text-neutral-200 cursor-pointer"
+                      >
+                        {videoDevices.map((d, i) => (
+                          <option key={d.deviceId || i} value={d.deviceId}>
+                            {d.label || `Camera ${i + 1}`}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-
-                    {/* Chin Rest Marker */}
-                    <div className="absolute bottom-3 left-0 right-0 text-center text-[9px] text-white/50 font-mono">
-                      Chin Line
-                    </div>
-                  </div>
-
-                  {/* Countdown overlay */}
-                  {countdown !== null && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-20">
-                      <span className="text-7xl font-black text-white animate-ping font-mono">
-                        {countdown}
-                      </span>
-                    </div>
+                  ) : (
+                    <span className="text-[11px] flex items-center gap-1">
+                      <Camera className="w-3 h-3 text-neutral-400" />
+                      Live Camera Viewfinder
+                    </span>
                   )}
 
-                  {/* Bottom Real-time Quality HUD */}
-                  <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between pointer-events-auto">
-                    <div className="px-2.5 py-1 bg-black/70 backdrop-blur-md rounded-lg text-[11px] text-white border border-white/10 flex items-center gap-1.5">
-                      <span
-                        className={`w-2 h-2 rounded-full ${
-                          quality?.isAcceptable ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                        }`}
-                      />
-                      <span>{quality?.feedback || 'Align face inside oval'}</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsMirrored((m) => !m)}
+                      className={`p-1.5 rounded-lg border text-[11px] flex items-center gap-1 transition-colors cursor-pointer ${
+                        isMirrored
+                          ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400'
+                          : 'bg-neutral-100 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700 text-neutral-500'
+                      }`}
+                    >
+                      <FlipHorizontal className="w-3.5 h-3.5" />
+                      <span>Mirror</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => startCamera()}
+                      className="p-1.5 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 rounded-lg text-neutral-600 dark:text-neutral-300 text-[11px] flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Viewport Frame */}
+                <div className="relative aspect-4/3 max-h-[460px] bg-neutral-950 rounded-2xl overflow-hidden flex items-center justify-center border border-neutral-800 shadow-inner">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${isMirrored ? 'scale-x-[-1]' : ''}`}
+                  />
+                  <canvas ref={canvasRef} className="hidden" />
+
+                  {/* Biometric Oval Guide Overlay */}
+                  <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4">
+                    {/* Outer Vignette Darkening */}
+                    <div className="absolute inset-0 bg-radial from-transparent via-black/25 to-black/60 pointer-events-none" />
+
+                    {/* Face Alignment Oval */}
+                    <div
+                      className={`relative w-40 sm:w-48 h-52 sm:h-60 rounded-[50%] border-2 transition-colors duration-300 ${
+                        quality?.isAcceptable
+                          ? 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.35)]'
+                          : 'border-indigo-400/80 shadow-[0_0_15px_rgba(99,102,241,0.25)]'
+                      }`}
+                    >
+                      {/* Crosshairs & Alignment Marks */}
+                      <div className="absolute top-1/2 left-0 right-0 h-px border-t border-dashed border-white/20" />
+                      <div className="absolute top-0 bottom-0 left-1/2 w-px border-l border-dashed border-white/20" />
+
+                      {/* Eye Level Line */}
+                      <div className="absolute top-[38%] left-3 right-3 flex items-center justify-between text-[9px] text-white/50 px-2 font-mono">
+                        <span>👁 Eye Level</span>
+                        <span>👁</span>
+                      </div>
+
+                      {/* Chin Rest Marker */}
+                      <div className="absolute bottom-3 left-0 right-0 text-center text-[9px] text-white/50 font-mono">
+                        Chin Line
+                      </div>
                     </div>
 
-                    {quality && (
-                      <div className="px-2 py-1 bg-black/70 backdrop-blur-md rounded-lg text-[10px] text-neutral-300 border border-white/10 font-mono">
-                        Lum: {quality.brightness} · Con: {quality.contrast}
+                    {/* Countdown overlay */}
+                    {countdown !== null && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-20">
+                        <span className="text-7xl font-black text-white animate-ping font-mono">
+                          {countdown}
+                        </span>
                       </div>
+                    )}
+
+                    {/* Bottom Real-time Quality HUD */}
+                    <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between pointer-events-auto">
+                      <div className="px-2.5 py-1 bg-black/70 backdrop-blur-md rounded-lg text-[11px] text-white border border-white/10 flex items-center gap-1.5">
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            quality?.isAcceptable ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                          }`}
+                        />
+                        <span>{quality?.feedback || 'Align face inside oval'}</span>
+                      </div>
+
+                      {quality && (
+                        <div className="px-2 py-1 bg-black/70 backdrop-blur-md rounded-lg text-[10px] text-neutral-300 border border-white/10 font-mono">
+                          Lum: {quality.brightness} · Con: {quality.contrast}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {cameraStatus === 'error' && (
+                    <div className="absolute inset-0 bg-neutral-950 p-6 flex flex-col items-center justify-center text-center text-neutral-400 z-10">
+                      <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
+                      <p className="text-xs text-neutral-200 font-semibold mb-1">Webcam Not Available</p>
+                      <p className="text-[11px] text-neutral-400 max-w-xs mb-3">{cameraError}</p>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                      >
+                        Upload Face Photo Instead
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* Review Captured Face Step */
+              <div className="space-y-3 flex-1 flex flex-col justify-between">
+                <div className="relative aspect-4/3 max-h-[460px] bg-neutral-950 rounded-2xl overflow-hidden flex items-center justify-center border border-emerald-500/50 shadow-lg">
+                  <img
+                    src={capturedPhoto}
+                    alt="Captured Face"
+                    className="w-full h-full object-cover"
+                  />
+
+                  {/* Biometric Mesh Overlay Simulation */}
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                    <div className="w-40 sm:w-48 h-52 sm:h-60 rounded-[50%] border-2 border-emerald-400/80 shadow-[0_0_25px_rgba(52,211,153,0.4)] flex items-center justify-center relative">
+                      <span className="text-[10px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-600 px-2 py-0.5 rounded-full absolute -top-3">
+                        ✓ Biometric Template Ready
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="absolute bottom-3 left-4 right-4 bg-black/80 backdrop-blur-md p-2.5 rounded-xl border border-white/10 flex items-center justify-between text-xs text-white">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>64-Point Facial Descriptor Generated</span>
+                    </div>
+                    <span className="font-mono text-[10px] text-emerald-400">Status: Validated</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT COLUMN: Dedicated Vertical Action Sidebar */}
+          <div className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/70 p-4 flex flex-col justify-between overflow-y-auto space-y-4">
+            <div className="space-y-3.5">
+              {/* Employee Summary Card */}
+              <div className="p-3 bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700 shadow-xs space-y-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block">
+                  Employee Candidate
+                </span>
+                <div className="flex items-center gap-3">
+                  {employee.facePhotoUrl ? (
+                    <img
+                      src={employee.facePhotoUrl}
+                      alt={empName}
+                      className="w-11 h-11 rounded-xl object-cover border border-neutral-300 dark:border-neutral-700 shadow-xs shrink-0"
+                    />
+                  ) : (
+                    <div className="w-11 h-11 rounded-xl bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold shrink-0">
+                      ID
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-bold text-neutral-900 dark:text-white block truncate">
+                      {empName}
+                    </span>
+                    <span className="text-[10px] text-neutral-500 font-mono block truncate">
+                      {employee.employeeCode || 'EMP'} · {employee.departmentName || 'General'}
+                    </span>
+                    {employee.faceEnrolled && (
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 mt-0.5">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Currently Enrolled</span>
+                      </span>
                     )}
                   </div>
                 </div>
 
-                {cameraStatus === 'error' && (
-                  <div className="absolute inset-0 bg-neutral-950 p-6 flex flex-col items-center justify-center text-center text-neutral-400 z-10">
-                    <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
-                    <p className="text-xs text-neutral-200 font-semibold mb-1">Webcam Not Available</p>
-                    <p className="text-[11px] text-neutral-400 max-w-xs mb-3">{cameraError}</p>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
-                    >
-                      Upload Face Photo Instead
-                    </button>
-                  </div>
+                {/* If already has enrolled face, show deletion option */}
+                {employee.faceEnrolled && !capturedPhoto && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteFace}
+                    disabled={deleting}
+                    className="w-full mt-1 px-2.5 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-rose-200 dark:border-rose-900"
+                    title="Remove Existing Face Record"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{deleting ? 'Removing Profile...' : 'Delete Existing Face ID'}</span>
+                  </button>
                 )}
               </div>
 
-              {/* Action Buttons: Snap & Upload */}
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={startCountdownSnap}
-                  disabled={cameraStatus !== 'ready' || countdown !== null}
-                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
-                >
-                  <Camera className="w-4 h-4" />
-                  <span>3-Sec Auto Snap</span>
-                </button>
+              {/* Status / Quality Guidance card */}
+              <div className="p-3 bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700 shadow-xs space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block">
+                  Scan Status
+                </span>
+                <div className="flex items-center gap-2 text-xs">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                      capturedPhoto
+                        ? 'bg-emerald-500'
+                        : quality?.isAcceptable
+                        ? 'bg-emerald-400 animate-pulse'
+                        : 'bg-amber-400'
+                    }`}
+                  />
+                  <span className="font-semibold text-neutral-900 dark:text-white">
+                    {capturedPhoto
+                      ? 'Photo Captured & Ready'
+                      : quality?.feedback || 'Align face inside oval'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                  {capturedPhoto
+                    ? 'Review the captured photo. Confirm to register this biometric baseline.'
+                    : 'Center face, maintain natural expression, and avoid backlight.'}
+                </p>
+              </div>
 
-                <button
-                  type="button"
-                  onClick={handleSnap}
-                  disabled={cameraStatus !== 'ready'}
-                  className="px-4 py-2.5 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <Sparkles className="w-4 h-4 text-indigo-500" />
-                  <span>Snap Now</span>
-                </button>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-2.5 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-                  title="Upload face image from computer"
-                >
-                  <Upload className="w-4 h-4" />
-                  <span>Upload</span>
-                </button>
+              {/* Guidelines bullet points */}
+              <div className="p-3 bg-neutral-100/70 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-800 text-[11px] text-neutral-500 space-y-1">
+                <span className="font-semibold text-neutral-700 dark:text-neutral-300 block">
+                  Accuracy Tips:
+                </span>
+                <ul className="list-disc list-inside space-y-0.5 text-neutral-500 dark:text-neutral-400">
+                  <li>Well-lit from front, no harsh shadow</li>
+                  <li>Remove sunglasses or masks</li>
+                  <li>Look directly into lens</li>
+                </ul>
               </div>
             </div>
-          ) : (
-            /* Review Captured Face Step */
-            <div className="space-y-4">
-              <div className="relative aspect-4/3 bg-neutral-950 rounded-2xl overflow-hidden flex items-center justify-center border border-emerald-500/50 shadow-lg">
-                <img
-                  src={capturedPhoto}
-                  alt="Captured Face"
-                  className="w-full h-full object-cover"
-                />
 
-                {/* Biometric Mesh Overlay Simulation */}
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                  <div className="w-44 h-56 rounded-[50%] border-2 border-emerald-400/80 shadow-[0_0_25px_rgba(52,211,153,0.4)] flex items-center justify-center relative">
-                    <span className="text-[10px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-600 px-2 py-0.5 rounded-full absolute -top-3">
-                      ✓ Biometric Signature Extracted
-                    </span>
-                  </div>
-                </div>
+            {/* VERTICAL ACTION BUTTONS */}
+            <div className="space-y-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
 
-                <div className="absolute bottom-3 left-4 right-4 bg-black/80 backdrop-blur-md p-2.5 rounded-xl border border-white/10 flex items-center justify-between text-xs text-white">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span>64-Point Facial Descriptor Generated</span>
-                  </div>
-                  <span className="font-mono text-[10px] text-emerald-400">Status: Validated</span>
-                </div>
-              </div>
+              {!capturedPhoto ? (
+                <>
+                  {/* Vertical Button 1: 3-Sec Auto Snap */}
+                  <button
+                    type="button"
+                    onClick={startCountdownSnap}
+                    disabled={cameraStatus !== 'ready' || countdown !== null}
+                    className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>3-Sec Auto Snap</span>
+                  </button>
 
-              {/* Confirmation Controls */}
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleRetake}
-                  disabled={saving}
-                  className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Retake Photo</span>
-                </button>
+                  {/* Vertical Button 2: Snap Now */}
+                  <button
+                    type="button"
+                    onClick={handleSnap}
+                    disabled={cameraStatus !== 'ready'}
+                    className="w-full py-2.5 px-4 bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                    <span>Snap Now</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={handleSaveEnrollment}
-                  disabled={saving}
-                  className="flex-2 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer"
-                >
-                  {saving ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Saving Biometric ID...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Confirm & Enroll Face ID</span>
-                    </>
-                  )}
-                </button>
-              </div>
+                  {/* Vertical Button 3: Upload from file */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full py-2.5 px-4 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Upload Face Photo</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Vertical Button 1: Confirm & Enroll */}
+                  <button
+                    type="button"
+                    onClick={handleSaveEnrollment}
+                    disabled={saving}
+                    className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer"
+                  >
+                    {saving ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Saving Biometric ID...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Confirm & Enroll Face ID</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Vertical Button 2: Retake */}
+                  <button
+                    type="button"
+                    onClick={handleRetake}
+                    disabled={saving}
+                    className="w-full py-2.5 px-4 bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retake Photo</span>
+                  </button>
+                </>
+              )}
+
+              {/* Vertical Button 4: Cancel / Close */}
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2.5 px-4 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 rounded-xl text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+                <span>Cancel / Close</span>
+              </button>
             </div>
-          )}
-
-          {/* Guidelines bullet points */}
-          <div className="p-3 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-800 text-[11px] text-neutral-500 space-y-1">
-            <span className="font-semibold text-neutral-700 dark:text-neutral-300 block">
-              Enrollment Guidelines for High Matching Accuracy:
-            </span>
-            <ul className="list-disc list-inside space-y-0.5 text-neutral-500 dark:text-neutral-400">
-              <li>Ensure your face is well-lit from the front, without strong backlighting.</li>
-              <li>Remove dark sunglasses, masks, or hats that obscure forehead and eye features.</li>
-              <li>Look straight into the camera lens with a neutral or slight smiling expression.</li>
-            </ul>
           </div>
         </div>
       </div>
