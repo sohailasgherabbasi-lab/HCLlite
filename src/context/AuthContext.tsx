@@ -47,6 +47,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const checkStatus = useCallback(async () => {
     try {
+      await api.syncCloudDatabase();
       const status = await api.getStatus();
       setIsInitialized(status.isInitialized);
     } catch (err) {
@@ -55,6 +56,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshSession = useCallback(async () => {
+    try {
+      await api.syncCloudDatabase();
+    } catch {
+      // non-blocking
+    }
     const storedToken = tokenStorage.get();
     if (!storedToken) {
       setUser(null);

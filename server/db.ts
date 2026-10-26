@@ -250,10 +250,27 @@ export interface DatabaseSchema {
 }
 
 import os from 'os';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 
 const isVercel = !!process.env.VERCEL;
 const DATA_DIR = isVercel ? path.join(os.tmpdir(), 'hcm_data') : path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'hcm_db.json');
+
+let serverFirestore: any = null;
+try {
+  const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(cfgPath)) {
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    const app = getApps().length > 0 ? getApp() : initializeApp(cfg);
+    serverFirestore =
+      cfg.firestoreDatabaseId && cfg.firestoreDatabaseId !== '(default)'
+        ? getFirestore(app, cfg.firestoreDatabaseId)
+        : getFirestore(app);
+  }
+} catch (err) {
+  console.warn('[HCM Lite Server] Firebase setup warning:', err);
+}
 
 const DEFAULT_SETTINGS: CompanySettings = {
   companyName: 'HCM Lite Technologies',
@@ -298,10 +315,30 @@ class Database {
   private data: DatabaseSchema;
 
   constructor() {
-    this.data = this.load();
+    this.data = this.loadLocal();
+    this.syncFromCloud();
   }
 
-  private load(): DatabaseSchema {
+  public async syncFromCloud() {
+    if (!serverFirestore) return;
+    try {
+      const snap = await getDoc(doc(serverFirestore, 'hcm_state', 'main'));
+      if (snap.exists()) {
+        const cloudData = snap.data();
+        if (cloudData && typeof cloudData === 'object' && cloudData.settings) {
+          this.data = cloudData as DatabaseSchema;
+          this.saveLocal(this.data);
+          console.log('[HCM Lite Server] Database state successfully restored from Firebase Firestore.');
+        }
+      } else {
+        await setDoc(doc(serverFirestore, 'hcm_state', 'main'), this.data);
+      }
+    } catch (err: any) {
+      console.warn('[HCM Lite Server] Cloud sync warning:', err.message);
+    }
+  }
+
+  private loadLocal(): DatabaseSchema {
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -314,11 +351,11 @@ class Database {
       console.error('Error loading DB file, initializing fresh:', err);
     }
     const initial = createInitialDatabase();
-    this.save(initial);
+    this.saveLocal(initial);
     return initial;
   }
 
-  private save(dataToSave?: DatabaseSchema) {
+  private saveLocal(dataToSave?: DatabaseSchema) {
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -326,6 +363,16 @@ class Database {
       fs.writeFileSync(DB_FILE, JSON.stringify(dataToSave || this.data, null, 2), 'utf-8');
     } catch (err) {
       console.error('Failed to write database file:', err);
+    }
+  }
+
+  private save(dataToSave?: DatabaseSchema) {
+    const payload = dataToSave || this.data;
+    this.saveLocal(payload);
+    if (serverFirestore) {
+      setDoc(doc(serverFirestore, 'hcm_state', 'main'), payload).catch((e: any) =>
+        console.warn('[HCM Lite Server] Firestore sync error:', e.message)
+      );
     }
   }
 

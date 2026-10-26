@@ -1316,6 +1316,7 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
 export const api = {
   // Auth
   getStatus: () => apiRequest<{ isInitialized: boolean; companyName: string; adminCount: number; employeeCount: number }>('/auth/status'),
+  syncCloudDatabase: () => clientDb.syncFromFirestore(),
   firstRun: (data: any) => apiRequest<{ token: string; user: any; settings: any }>('/auth/first-run', { method: 'POST', body: JSON.stringify(data) }),
   login: (credentials: { email: string; password: string }) => apiRequest<{ token: string; user: any }>('/auth/login', { method: 'POST', body: JSON.stringify(credentials) }),
   changePassword: async (data: { oldPassword?: string; newPassword: string }) => {

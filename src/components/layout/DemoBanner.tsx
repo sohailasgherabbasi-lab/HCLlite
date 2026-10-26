@@ -65,8 +65,9 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({ onRefreshData }) => {
           <span>Saylani Hackathon HCM Lite</span>
         </span>
         <span className="text-neutral-500 hidden sm:inline">|</span>
-        <span className="text-neutral-400 hidden sm:inline">
-          Starts clean with 0 dummy records per rules
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span>Firebase Cloud Database Active</span>
         </span>
       </div>
 

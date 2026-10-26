@@ -137,14 +137,59 @@ function getInitialDbState() {
   };
 }
 
+import { firestore, doc, getDoc, setDoc } from '../firebase.ts';
+
 class ClientDb {
   private data: any;
+  private isCloudSynced = false;
+  private listeners: Array<(data: any) => void> = [];
 
   constructor() {
-    this.data = this.load();
+    this.data = this.loadLocal();
+    this.syncFromFirestore();
   }
 
-  private load() {
+  public subscribe(listener: (data: any) => void) {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+
+  public async syncFromFirestore(): Promise<any> {
+    try {
+      if (!firestore) return this.data;
+      const snap = await getDoc(doc(firestore, 'hcm_state', 'main'));
+      if (snap.exists()) {
+        const cloudData = snap.data();
+        if (cloudData && typeof cloudData === 'object' && cloudData.settings) {
+          this.data = cloudData;
+          this.saveLocal(cloudData);
+          this.isCloudSynced = true;
+          this.listeners.forEach((cb) => cb(this.data));
+          console.log('[HCM Lite Client] Synchronized latest records from Firebase Firestore.');
+          return this.data;
+        }
+      } else {
+        // First-run seed to Firestore
+        await this.pushToFirestore();
+      }
+    } catch (err: any) {
+      console.warn('[HCM Lite Client] Firestore sync warning:', err.message);
+    }
+    return this.data;
+  }
+
+  public async pushToFirestore() {
+    try {
+      if (!firestore) return;
+      await setDoc(doc(firestore, 'hcm_state', 'main'), this.data);
+    } catch (err: any) {
+      console.warn('[HCM Lite Client] Failed to push update to Firestore:', err.message);
+    }
+  }
+
+  private loadLocal() {
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
@@ -154,11 +199,11 @@ class ClientDb {
       // fallback
     }
     const initial = getInitialDbState();
-    this.save(initial);
+    this.saveLocal(initial);
     return initial;
   }
 
-  private save(d?: any) {
+  private saveLocal(d?: any) {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(d || this.data));
     } catch {
@@ -191,13 +236,15 @@ class ClientDb {
     } else {
       this.data = getInitialDbState();
     }
-    this.save();
+    this.saveLocal();
+    this.pushToFirestore();
     return this.data;
   }
 
   public mutate(fn: (draft: any) => void) {
     fn(this.data);
-    this.save();
+    this.saveLocal();
+    this.pushToFirestore();
     return this.data;
   }
 }
