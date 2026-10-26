@@ -30,6 +30,13 @@ export const AnnouncementsPage: React.FC = () => {
 
   useEffect(() => {
     loadAnnouncements();
+    const handleSync = () => {
+      loadAnnouncements();
+    };
+    window.addEventListener('hcm_cloud_synced', handleSync);
+    return () => {
+      window.removeEventListener('hcm_cloud_synced', handleSync);
+    };
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {

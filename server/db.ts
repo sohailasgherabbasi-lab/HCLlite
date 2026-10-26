@@ -251,7 +251,7 @@ export interface DatabaseSchema {
 
 import os from 'os';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 const isVercel = !!process.env.VERCEL;
 const DATA_DIR = isVercel ? path.join(os.tmpdir(), 'hcm_data') : path.resolve(process.cwd(), 'data');
@@ -313,10 +313,36 @@ function createInitialDatabase(): DatabaseSchema {
 
 class Database {
   private data: DatabaseSchema;
+  private unsubscribeSnapshot: (() => void) | null = null;
 
   constructor() {
     this.data = this.loadLocal();
     this.syncFromCloud();
+    this.listenToCloud();
+  }
+
+  private listenToCloud() {
+    if (!serverFirestore) return;
+    try {
+      this.unsubscribeSnapshot = onSnapshot(
+        doc(serverFirestore, 'hcm_state', 'main'),
+        (snap) => {
+          if (snap.exists()) {
+            const cloudData = snap.data();
+            if (cloudData && typeof cloudData === 'object' && cloudData.settings) {
+              this.data = cloudData as DatabaseSchema;
+              this.saveLocal(this.data);
+              console.log('[HCM Lite Server] Real-time state synchronized from Firestore across instances/devices.');
+            }
+          }
+        },
+        (err) => {
+          console.warn('[HCM Lite Server] onSnapshot warning:', err.message);
+        }
+      );
+    } catch (err: any) {
+      console.warn('[HCM Lite Server] Failed to attach onSnapshot listener:', err.message);
+    }
   }
 
   public async syncFromCloud() {
@@ -337,6 +363,7 @@ class Database {
       console.warn('[HCM Lite Server] Cloud sync warning:', err.message);
     }
   }
+
 
   private loadLocal(): DatabaseSchema {
     try {

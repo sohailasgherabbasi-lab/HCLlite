@@ -86,6 +86,13 @@ export const OrganizationSetup: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    const handleSync = () => {
+      loadData();
+    };
+    window.addEventListener('hcm_cloud_synced', handleSync);
+    return () => {
+      window.removeEventListener('hcm_cloud_synced', handleSync);
+    };
   }, []);
 
   const handleSaveSettings = async (e: React.FormEvent) => {

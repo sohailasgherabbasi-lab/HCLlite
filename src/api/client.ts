@@ -103,24 +103,24 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
 }
 
 // Client-side fallback request router
-function handleClientFallback<T>(endpoint: string, options: RequestInit): Promise<T> {
+async function handleClientFallback<T>(endpoint: string, options: RequestInit): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
   const body = options.body ? JSON.parse(options.body as string) : {};
-  const dbState = clientDb.get();
+  const dbState = await clientDb.ensureSynced();
   const currentToken = tokenStorage.get();
   let activeUser = tokenStorage.getActiveUser();
 
   // If token specifies a user ID, prioritize that user
   if (currentToken && currentToken.startsWith('client_token_')) {
     const tokenId = currentToken.replace('client_token_', '');
-    const userFromToken = dbState.users.find((u: any) => u.id === tokenId);
+    const userFromToken = (dbState.users || []).find((u: any) => u.id === tokenId);
     if (userFromToken) {
       activeUser = userFromToken;
     }
   }
 
   if (!activeUser) {
-    activeUser = dbState.users[0] || {
+    activeUser = (dbState.users || [])[0] || {
       id: 'usr_admin_1',
       name: 'Sohail Abbasi (Admin)',
       email: 'admin@hcmlite.com',
@@ -131,7 +131,8 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
 
   // Helper to record audit log in clientDb
   const addAudit = (action: string, entity: string, details: string, entityId?: string) => {
-    clientDb.mutate((d) => {
+    clientDb.mutateAsync((d: any) => {
+      if (!Array.isArray(d.auditLogs)) d.auditLogs = [];
       d.auditLogs.unshift({
         id: 'aud_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
         actorId: activeUser.id,
@@ -147,12 +148,12 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
     });
   };
 
-  return new Promise((resolve, reject) => {
-    setTimeout(() => {
-      try {
-        // -------------------------------------------------------------
-        // AUTH & STATUS
-        // -------------------------------------------------------------
+  return new Promise(async (resolve, reject) => {
+    try {
+      // -------------------------------------------------------------
+      // AUTH & STATUS
+      // -------------------------------------------------------------
+
         if (endpoint.startsWith('/auth/status')) {
           return resolve({
             isInitialized: dbState.isInitialized,
@@ -973,33 +974,119 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
         // LEAVE MANAGEMENT
         // -------------------------------------------------------------
         if (endpoint.startsWith('/leave/balances')) {
+          const targetEmpId = activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+          const quotas = dbState.settings?.leaveQuotas || { annual: 14, sick: 8, casual: 10, unpaid: -1 };
+          const approvedLeaves = (dbState.leaves || []).filter(
+            (l: any) => l.employeeId === targetEmpId && l.status === 'approved'
+          );
+
+          let usedAnnual = 0;
+          let usedSick = 0;
+          let usedCasual = 0;
+          let usedUnpaid = 0;
+
+          approvedLeaves.forEach((l: any) => {
+            const days = Number(l.workingDays) || 0;
+            if (l.leaveType === 'annual') usedAnnual += days;
+            if (l.leaveType === 'sick') usedSick += days;
+            if (l.leaveType === 'casual') usedCasual += days;
+            if (l.leaveType === 'unpaid') usedUnpaid += days;
+          });
+
           return resolve({
-            annual: { total: 14, used: 0, remaining: 14 },
-            sick: { total: 8, used: 0, remaining: 8 },
-            casual: { total: 10, used: 1, remaining: 9 },
-            unpaid: { used: 0, remaining: 'Unlimited' },
+            annual: { total: quotas.annual, used: usedAnnual, remaining: Math.max(0, quotas.annual - usedAnnual) },
+            sick: { total: quotas.sick, used: usedSick, remaining: Math.max(0, quotas.sick - usedSick) },
+            casual: { total: quotas.casual, used: usedCasual, remaining: Math.max(0, quotas.casual - usedCasual) },
+            unpaid: { used: usedUnpaid, remaining: 'Unlimited' },
           } as unknown as T);
         }
 
         if (endpoint === '/leave/apply' && method === 'POST') {
+          const { leaveType, startDate, endDate, reason } = body;
+          if (!leaveType || !startDate || !endDate || !reason) {
+            return reject(new Error('Leave type, start date, end date, and reason are required.'));
+          }
+
+          const empId = activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+          const targetEmp = dbState.employees.find((e: any) => e.id === empId);
+
+          const workingDays = calculateWorkingDays(
+            startDate,
+            endDate,
+            dbState.settings?.weekendDays || [0, 6],
+            dbState.holidays || []
+          );
+          if (workingDays <= 0) {
+            return reject(new Error('Selected date range falls entirely on weekends or public holidays (0 working days).'));
+          }
+
+          const hasOverlap = (dbState.leaves || []).some(
+            (l: any) =>
+              l.employeeId === empId &&
+              l.status !== 'rejected' &&
+              l.status !== 'cancelled' &&
+              !(endDate < l.startDate || startDate > l.endDate)
+          );
+          if (hasOverlap) {
+            return reject(new Error('Leave request dates overlap with an existing pending or approved leave application.'));
+          }
+
+          if (leaveType !== 'unpaid') {
+            const quotas = dbState.settings?.leaveQuotas || { annual: 14, sick: 8, casual: 10, unpaid: -1 };
+            const quota = quotas[leaveType as 'annual' | 'sick' | 'casual'] || 0;
+            const used = (dbState.leaves || [])
+              .filter((l: any) => l.employeeId === empId && l.status === 'approved' && l.leaveType === leaveType)
+              .reduce((acc: number, l: any) => acc + (Number(l.workingDays) || 0), 0);
+            const remaining = Math.max(0, quota - used);
+            if (workingDays > remaining) {
+              return reject(new Error(`Insufficient leave quota. You requested ${workingDays} working days, but only have ${remaining} days remaining for ${leaveType} leave.`));
+            }
+          }
+
+          const dept = dbState.departments.find((d: any) => d.id === targetEmp?.departmentId);
           const leave = {
-            id: 'leave_' + Date.now(),
-            employeeId: activeUser.employeeId || 'emp_1',
-            employeeName: activeUser.name,
-            ...body,
-            workingDays: 2,
+            id: 'leave_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+            employeeId: empId,
+            employeeName: targetEmp ? `${targetEmp.firstName} ${targetEmp.lastName}` : activeUser.name,
+            employeeCode: targetEmp?.employeeCode || 'EMP-001',
+            departmentName: dept?.name || 'General',
+            leaveType,
+            startDate,
+            endDate,
+            workingDays,
+            reason: reason.trim(),
             status: 'pending',
             createdAt: new Date().toISOString(),
           };
-          clientDb.mutate((d) => d.leaves.unshift(leave));
-          addAudit('CREATE', 'LEAVE', `Applied for ${body.leaveType} leave (${body.startDate} to ${body.endDate})`, leave.id);
+
+          await clientDb.mutateAsync((d: any) => {
+            if (!Array.isArray(d.leaves)) d.leaves = [];
+            d.leaves.unshift(leave);
+
+            if (!Array.isArray(d.notifications)) d.notifications = [];
+            (d.users || [])
+              .filter((u: any) => u.role === 'hr' || u.role === 'admin')
+              .forEach((u: any) => {
+                d.notifications.unshift({
+                  id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
+                  userId: u.id,
+                  title: 'New Leave Application',
+                  message: `${targetEmp ? targetEmp.firstName : activeUser.name} applied for ${workingDays} day(s) ${leaveType} leave (${startDate} to ${endDate})`,
+                  type: 'leave',
+                  isRead: false,
+                  createdAt: new Date().toISOString(),
+                });
+              });
+          });
+
+          addAudit('CREATE', 'LEAVE', `Applied for ${workingDays} day(s) of ${leaveType} leave (${startDate} to ${endDate})`, leave.id);
           return resolve({ message: 'Leave application submitted successfully.', leave } as unknown as T);
         }
 
         if (endpoint.includes('/leave/') && endpoint.endsWith('/cancel') && method === 'POST') {
           const id = endpoint.split('/')[2];
-          clientDb.mutate((d) => {
-            const l = d.leaves.find((x: any) => x.id === id);
+          await clientDb.mutateAsync((d: any) => {
+            const l = (d.leaves || []).find((x: any) => x.id === id);
             if (l) l.status = 'cancelled';
           });
           addAudit('UPDATE', 'LEAVE', `Cancelled leave request ${id}`, id);
@@ -1008,20 +1095,57 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
 
         if (endpoint.includes('/leave/') && endpoint.endsWith('/action') && method === 'POST') {
           const id = endpoint.split('/')[2];
-          clientDb.mutate((d) => {
-            const l = d.leaves.find((x: any) => x.id === id);
+          const newStatus = body.action === 'approve' ? 'approved' : 'rejected';
+          let updatedLeave: any = null;
+
+          await clientDb.mutateAsync((d: any) => {
+            const l = (d.leaves || []).find((x: any) => x.id === id);
             if (l) {
-              l.status = body.action === 'approve' ? 'approved' : 'rejected';
+              l.status = newStatus;
               l.reviewComment = body.reviewComment || '';
+              l.reviewedBy = activeUser.id;
+              l.reviewedAt = new Date().toISOString();
+              updatedLeave = l;
+
+              const emp = (d.employees || []).find((e: any) => e.id === l.employeeId);
+              if (emp) {
+                if (!Array.isArray(d.notifications)) d.notifications = [];
+                d.notifications.unshift({
+                  id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
+                  userId: emp.userId,
+                  title: `Leave Application ${newStatus.toUpperCase()}`,
+                  message: `Your ${l.leaveType} leave (${l.startDate} to ${l.endDate}) was ${newStatus} by HR${body.reviewComment ? ': ' + body.reviewComment : '.'}`,
+                  type: 'leave',
+                  isRead: false,
+                  createdAt: new Date().toISOString(),
+                });
+              }
             }
           });
-          addAudit('APPROVE', 'LEAVE', `Leave request ${body.action}d by HR Lead`, id);
-          return resolve({ message: `Leave request ${body.action}d` } as unknown as T);
+
+          addAudit('APPROVE', 'LEAVE', `Leave request ${id} ${newStatus} by ${activeUser.name}`, id);
+          return resolve({ message: `Leave request has been ${newStatus}.`, leave: updatedLeave } as unknown as T);
         }
 
         if (endpoint.startsWith('/leave/requests')) {
-          return resolve(dbState.leaves as unknown as T);
+          let list = (dbState.leaves || []).map((l: any) => {
+            const emp = dbState.employees.find((e: any) => e.id === l.employeeId);
+            const dept = dbState.departments.find((d: any) => d.id === emp?.departmentId);
+            return {
+              ...l,
+              employeeName: l.employeeName || (emp ? `${emp.firstName} ${emp.lastName}` : 'Ali Raza'),
+              employeeCode: l.employeeCode || emp?.employeeCode || 'EMP-001',
+              departmentName: l.departmentName || dept?.name || 'General',
+            };
+          });
+
+          if (activeUser.role === 'employee' && activeUser.employeeId) {
+            list = list.filter((l: any) => l.employeeId === activeUser.employeeId);
+          }
+
+          return resolve(list as unknown as T);
         }
+
 
         // -------------------------------------------------------------
         // PAYROLL
@@ -1305,11 +1429,9 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
         }
 
         // Fallback default
-        return resolve([] as unknown as T);
       } catch (e) {
         reject(e);
       }
-    }, 40);
   });
 }
 

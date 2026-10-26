@@ -49,9 +49,31 @@
         "workedHours": { "type": "number" },
         "source": { "type": "string" }
       }
+    },
+    "LeaveRequest": {
+      "title": "LeaveRequest",
+      "description": "Employee leave applications and approvals",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "employeeCode": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "leaveType": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "workingDays": { "type": "number" },
+        "reason": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
+    "/hcm_state/main": {
+      "description": "Unified company state synchronized real-time across all devices"
+    },
     "/settings/company": {
       "schema": { "$ref": "#/entities/CompanySettings" },
       "description": "Organization configuration"
@@ -63,6 +85,10 @@
     "/attendance/{attendanceId}": {
       "schema": { "$ref": "#/entities/AttendanceRecord" },
       "description": "Attendance punch records"
+    },
+    "/leaves/{leaveId}": {
+      "schema": { "$ref": "#/entities/LeaveRequest" },
+      "description": "Leave requests"
     }
   }
 }

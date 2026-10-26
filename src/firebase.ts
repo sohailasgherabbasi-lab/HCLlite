@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, getDocFromServer, collection, getDocs, updateDoc } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -22,4 +22,5 @@ async function testConnection() {
 }
 testConnection();
 
-export { doc, getDoc, setDoc, getDocFromServer };
+export { doc, getDoc, setDoc, onSnapshot, getDocFromServer, collection, getDocs, updateDoc };
+

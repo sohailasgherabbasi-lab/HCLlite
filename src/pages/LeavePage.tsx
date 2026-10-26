@@ -59,6 +59,13 @@ export const LeavePage: React.FC<LeavePageProps> = ({ onOpenSmartLeave }) => {
 
   useEffect(() => {
     loadData();
+    const handleSync = () => {
+      loadData();
+    };
+    window.addEventListener('hcm_cloud_synced', handleSync);
+    return () => {
+      window.removeEventListener('hcm_cloud_synced', handleSync);
+    };
   }, []);
 
   const handleApply = async (e: React.FormEvent) => {

@@ -137,16 +137,64 @@ function getInitialDbState() {
   };
 }
 
-import { firestore, doc, getDoc, setDoc } from '../firebase.ts';
+import { firestore, doc, getDoc, setDoc, onSnapshot } from '../firebase.ts';
 
 class ClientDb {
   private data: any;
   private isCloudSynced = false;
   private listeners: Array<(data: any) => void> = [];
+  private syncResolve!: (value: any) => void;
+  public readonly syncPromise: Promise<any>;
+  private unsubscribeSnapshot: (() => void) | null = null;
 
   constructor() {
     this.data = this.loadLocal();
-    this.syncFromFirestore();
+    this.syncPromise = new Promise((resolve) => {
+      this.syncResolve = resolve;
+    });
+    this.initRealtimeFirestore();
+  }
+
+  private initRealtimeFirestore() {
+    if (!firestore) {
+      this.syncResolve(this.data);
+      return;
+    }
+
+    try {
+      const docRef = doc(firestore, 'hcm_state', 'main');
+      this.unsubscribeSnapshot = onSnapshot(
+        docRef,
+        (snap) => {
+          if (snap.exists()) {
+            const cloudData = snap.data();
+            if (cloudData && typeof cloudData === 'object' && cloudData.settings) {
+              this.data = cloudData;
+              this.saveLocal(cloudData);
+              this.isCloudSynced = true;
+              this.notifyListeners();
+              this.syncResolve(this.data);
+              console.log('[HCM Lite Client] Real-time state synchronized from Firestore across devices.');
+            }
+          } else {
+            // First run: Seed initial state to Firestore
+            console.log('[HCM Lite Client] No remote state found in Firestore. Seeding initial database...');
+            this.pushToFirestore().then(() => {
+              this.isCloudSynced = true;
+              this.syncResolve(this.data);
+            });
+          }
+        },
+        (error) => {
+          console.warn('[HCM Lite Client] Firestore onSnapshot warning:', error.message);
+          // Fall back gracefully if offline
+          this.syncResolve(this.data);
+        }
+      );
+    } catch (err: any) {
+      console.warn('[HCM Lite Client] Error attaching Firestore snapshot listener:', err.message);
+      this.syncResolve(this.data);
+    }
   }
 
   public subscribe(listener: (data: any) => void) {
@@ -154,6 +202,28 @@ class ClientDb {
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
+  }
+
+  private notifyListeners() {
+    this.listeners.forEach((cb) => {
+      try {
+        cb(this.data);
+      } catch (e) {
+        console.error('Error notifying clientDb listener:', e);
+      }
+    });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('hcm_cloud_synced', { detail: this.data }));
+    }
+  }
+
+  public async ensureSynced(): Promise<any> {
+    if (this.isCloudSynced) return this.data;
+    // Timeout race: guarantee resolution within 3.5s so offline UI never hangs
+    return Promise.race([
+      this.syncPromise,
+      new Promise((res) => setTimeout(() => res(this.data), 3500)),
+    ]);
   }
 
   public async syncFromFirestore(): Promise<any> {
@@ -166,12 +236,10 @@ class ClientDb {
           this.data = cloudData;
           this.saveLocal(cloudData);
           this.isCloudSynced = true;
-          this.listeners.forEach((cb) => cb(this.data));
-          console.log('[HCM Lite Client] Synchronized latest records from Firebase Firestore.');
+          this.notifyListeners();
           return this.data;
         }
       } else {
-        // First-run seed to Firestore
         await this.pushToFirestore();
       }
     } catch (err: any) {
@@ -180,7 +248,7 @@ class ClientDb {
     return this.data;
   }
 
-  public async pushToFirestore() {
+  public async pushToFirestore(): Promise<void> {
     try {
       if (!firestore) return;
       await setDoc(doc(firestore, 'hcm_state', 'main'), this.data);
@@ -215,7 +283,7 @@ class ClientDb {
     return this.data;
   }
 
-  public reset(empty = false) {
+  public async reset(empty = false) {
     if (empty) {
       this.data = {
         isInitialized: false,
@@ -237,16 +305,27 @@ class ClientDb {
       this.data = getInitialDbState();
     }
     this.saveLocal();
-    this.pushToFirestore();
+    await this.pushToFirestore();
+    this.notifyListeners();
     return this.data;
   }
 
-  public mutate(fn: (draft: any) => void) {
+  public async mutateAsync(fn: (draft: any) => void): Promise<any> {
     fn(this.data);
     this.saveLocal();
-    this.pushToFirestore();
+    await this.pushToFirestore();
+    this.notifyListeners();
+    return this.data;
+  }
+
+  public async mutate(fn: (draft: any) => void): Promise<any> {
+    fn(this.data);
+    this.saveLocal();
+    await this.pushToFirestore();
+    this.notifyListeners();
     return this.data;
   }
 }
 
 export const clientDb = new ClientDb();
+
