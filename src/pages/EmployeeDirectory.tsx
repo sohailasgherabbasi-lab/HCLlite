@@ -22,8 +22,10 @@ import {
   Mail,
   MapPin,
   TrendingDown,
+  ScanFace,
 } from 'lucide-react';
 import { Employee, Department, Designation } from '../types/index.ts';
+import { FaceEnrollmentModal } from '../components/employee/FaceEnrollmentModal.tsx';
 
 export const EmployeeDirectory: React.FC = () => {
   const { user } = useAuth();
@@ -41,6 +43,9 @@ export const EmployeeDirectory: React.FC = () => {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [page, setPage] = useState(1);
   const [totalEmployees, setTotalEmployees] = useState(0);
+
+  // Biometric Face ID Enrollment Modal
+  const [enrollingEmp, setEnrollingEmp] = useState<Employee | null>(null);
 
   // Employee 360 Drawer
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
@@ -300,6 +305,7 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
               <th className="px-4 py-3 font-medium">Department</th>
               <th className="px-4 py-3 font-medium">Designation</th>
               <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Face ID</th>
               {!isEmployee && <th className="px-4 py-3 font-medium">Gross Salary</th>}
               <th className="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
@@ -307,7 +313,7 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
             {employees.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-center py-8 text-neutral-400">
+                <td colSpan={8} className="text-center py-8 text-neutral-400">
                   No employee records found.
                 </td>
               </tr>
@@ -315,10 +321,26 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
               employees.map((emp) => (
                 <tr key={emp.id} className="hover:bg-neutral-50 dark:hover:bg-neutral-800/40">
                   <td className="px-4 py-3">
-                    <div className="font-semibold text-neutral-900 dark:text-white">
-                      {emp.firstName} {emp.lastName}
+                    <div className="flex items-center gap-2.5">
+                      {emp.facePhotoUrl ? (
+                        <img
+                          src={emp.facePhotoUrl}
+                          alt={emp.firstName}
+                          className="w-7 h-7 rounded-lg object-cover border border-neutral-200 dark:border-neutral-700 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold flex items-center justify-center text-[10px] shrink-0">
+                          {emp.firstName?.[0]}
+                          {emp.lastName?.[0]}
+                        </div>
+                      )}
+                      <div>
+                        <div className="font-semibold text-neutral-900 dark:text-white">
+                          {emp.firstName} {emp.lastName}
+                        </div>
+                        <div className="text-[11px] text-neutral-400">{emp.email}</div>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-neutral-400">{emp.email}</div>
                   </td>
                   <td className="px-4 py-3 font-mono font-medium text-neutral-600 dark:text-neutral-300">
                     {emp.employeeCode}
@@ -344,18 +366,40 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
                       {emp.status}
                     </span>
                   </td>
+                  <td className="px-4 py-3">
+                    {emp.faceEnrolled ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-md">
+                        <ScanFace className="w-3 h-3 text-emerald-500" />
+                        <span>Enrolled</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 px-2 py-0.5 rounded-md">
+                        <span>Not Enrolled</span>
+                      </span>
+                    )}
+                  </td>
                   {!isEmployee && (
                     <td className="px-4 py-3 font-mono tabular-nums text-neutral-900 dark:text-white font-medium">
                       PKR {Number(emp.grossSalary || 0).toLocaleString()}
                     </td>
                   )}
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => open360(emp.id)}
-                      className="px-3 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      360 Profile
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        onClick={() => setEnrollingEmp(emp)}
+                        className="px-2 py-1 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1"
+                        title="Enroll or Update Biometric Face Record"
+                      >
+                        <ScanFace className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>Face ID</span>
+                      </button>
+                      <button
+                        onClick={() => open360(emp.id)}
+                        className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                      >
+                        360 Profile
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -468,6 +512,56 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
                     <div>
                       <span className="text-neutral-400 block text-[11px]">Gender</span>
                       <span className="capitalize">{emp360.gender}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Biometric Face Recognition Profile */}
+                <div className="p-4 bg-neutral-50 dark:bg-neutral-800/40 rounded-xl border border-neutral-200 dark:border-neutral-700/60 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-neutral-700 dark:text-neutral-300 block uppercase text-[11px] tracking-wider flex items-center gap-1.5">
+                      <ScanFace className="w-4 h-4 text-indigo-500" />
+                      <span>Biometric Face ID Profile</span>
+                    </span>
+                    {emp360.faceEnrolled ? (
+                      <span className="text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Enrolled
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-medium bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-full">
+                        Not Enrolled
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3.5">
+                    {emp360.facePhotoUrl ? (
+                      <img
+                        src={emp360.facePhotoUrl}
+                        alt={emp360.firstName}
+                        className="w-16 h-16 rounded-xl object-cover border-2 border-indigo-500/50 shadow-xs shrink-0"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-xl bg-neutral-200 dark:bg-neutral-700/70 text-neutral-400 flex flex-col items-center justify-center shrink-0">
+                        <ScanFace className="w-6 h-6" />
+                        <span className="text-[9px] mt-0.5 font-mono">No Face ID</span>
+                      </div>
+                    )}
+                    <div className="space-y-1.5 flex-1">
+                      <p className="text-xs text-neutral-600 dark:text-neutral-300 leading-relaxed">
+                        {emp360.faceEnrolled
+                          ? `Facial baseline profile is active. Enrolled ${emp360.faceEnrolledAt ? new Date(emp360.faceEnrolledAt).toLocaleDateString() : 'Active'}. Ready for camera attendance kiosk.`
+                          : 'No biometric record registered. Employee cannot use the facial recognition kiosk until enrolled.'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setEnrollingEmp(emp360)}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                      >
+                        <ScanFace className="w-3.5 h-3.5" />
+                        <span>{emp360.faceEnrolled ? 'Re-Enroll Face ID' : 'Enroll Face ID Now'}</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -857,6 +951,21 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
             </form>
           </div>
         </div>
+      )}
+
+      {/* Biometric Face ID Enrollment Modal */}
+      {enrollingEmp && (
+        <FaceEnrollmentModal
+          isOpen={!!enrollingEmp}
+          onClose={() => setEnrollingEmp(null)}
+          employee={enrollingEmp}
+          onSuccess={(updated) => {
+            loadData();
+            if (emp360 && emp360.id === updated.id) {
+              setEmp360({ ...emp360, ...updated });
+            }
+          }}
+        />
       )}
     </div>
   );

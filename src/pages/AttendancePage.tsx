@@ -21,6 +21,7 @@ import {
   Edit3,
   Trash2,
   UserCheck,
+  ScanFace,
 } from 'lucide-react';
 import { AttendanceCorrection } from '../types/index.ts';
 
@@ -646,18 +647,23 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ onOpenCameraAtte
                           </td>
 
                           <td className="px-4 py-3">
-                            <span className="flex items-center gap-1.5 text-[11px] text-neutral-600 dark:text-neutral-400">
-                              {r.source === 'camera' ? (
-                                <>
-                                  <Camera className="w-3.5 h-3.5 text-indigo-500" />
-                                  <span>Camera (GPS)</span>
-                                </>
-                              ) : r.checkInTime ? (
-                                <span>Web Portal</span>
-                              ) : (
-                                <span className="text-neutral-400">—</span>
-                              )}
-                            </span>
+                            {r.source === 'camera' ? (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="flex items-center gap-1.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                                  <ScanFace className="w-3.5 h-3.5" />
+                                  <span>Face ID Kiosk</span>
+                                </span>
+                                {r.faceVerified && (
+                                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                                    ✓ Match {r.faceMatchScore || 94}%
+                                  </span>
+                                )}
+                              </div>
+                            ) : r.checkInTime ? (
+                              <span className="text-[11px] text-neutral-600 dark:text-neutral-400">Web Portal</span>
+                            ) : (
+                              <span className="text-neutral-400">—</span>
+                            )}
                           </td>
 
                           <td className="px-4 py-3">

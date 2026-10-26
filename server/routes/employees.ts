@@ -524,3 +524,94 @@ employeesRouter.put('/:id', authenticate, (req: AuthenticatedRequest, res: Respo
 
   res.json({ message: 'Employee updated successfully', employee: db.get().employees.find((x) => x.id === id) });
 });
+
+// POST /api/employees/:id/enroll-face (Enroll/Update Face Biometric ID)
+employeesRouter.post('/:id/enroll-face', authenticate, (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const user = req.user!;
+  const state = db.get();
+  const emp = state.employees.find((e) => e.id === id);
+
+  if (!emp) {
+    return res.status(404).json({ error: 'Employee not found.' });
+  }
+
+  // Permission check: Admins/HR can enroll anyone, regular employee can only enroll their own face
+  if (user.role === 'employee' && user.employeeId !== id) {
+    return res.status(403).json({ error: 'You are only authorized to manage your own biometric face record.' });
+  }
+
+  const { photoSnapshot, descriptor } = req.body;
+  if (!photoSnapshot) {
+    return res.status(400).json({ error: 'Face photo snapshot is required for biometric enrollment.' });
+  }
+
+  const enrolledAt = new Date().toISOString();
+
+  db.update((draft) => {
+    const target = draft.employees.find((e) => e.id === id);
+    if (target) {
+      target.faceEnrolled = true;
+      target.facePhotoUrl = photoSnapshot;
+      target.faceDescriptor = Array.isArray(descriptor) ? descriptor : [];
+      target.faceEnrolledAt = enrolledAt;
+      target.faceEnrolledBy = user.name;
+      target.updatedAt = enrolledAt;
+    }
+  });
+
+  logAudit({
+    req,
+    action: 'UPDATE',
+    entity: 'EMPLOYEE',
+    entityId: id,
+    details: `Biometric Face ID enrolled for ${emp.firstName} ${emp.lastName} (${emp.employeeCode}) by ${user.name}`,
+  });
+
+  res.json({
+    message: `Face ID successfully registered for ${emp.firstName} ${emp.lastName}!`,
+    employee: db.get().employees.find((e) => e.id === id),
+  });
+});
+
+// DELETE /api/employees/:id/face (Remove Face Biometric Record)
+employeesRouter.delete('/:id/face', authenticate, (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const user = req.user!;
+  const state = db.get();
+  const emp = state.employees.find((e) => e.id === id);
+
+  if (!emp) {
+    return res.status(404).json({ error: 'Employee not found.' });
+  }
+
+  if (user.role === 'employee' && user.employeeId !== id) {
+    return res.status(403).json({ error: 'You are only authorized to manage your own biometric face record.' });
+  }
+
+  db.update((draft) => {
+    const target = draft.employees.find((e) => e.id === id);
+    if (target) {
+      target.faceEnrolled = false;
+      target.facePhotoUrl = undefined;
+      target.faceDescriptor = undefined;
+      target.faceEnrolledAt = undefined;
+      target.faceEnrolledBy = undefined;
+      target.updatedAt = new Date().toISOString();
+    }
+  });
+
+  logAudit({
+    req,
+    action: 'UPDATE',
+    entity: 'EMPLOYEE',
+    entityId: id,
+    details: `Biometric Face ID removed for ${emp.firstName} ${emp.lastName} (${emp.employeeCode}) by ${user.name}`,
+  });
+
+  res.json({
+    message: `Face ID profile removed for ${emp.firstName} ${emp.lastName}.`,
+    employee: db.get().employees.find((e) => e.id === id),
+  });
+});
+

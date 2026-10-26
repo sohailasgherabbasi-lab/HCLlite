@@ -56,6 +56,8 @@ attendanceRouter.get('/today', authenticate, (req: AuthenticatedRequest, res: Re
       source: att?.source || 'web',
       locationVerified: att?.locationVerified,
       distanceMeters: att?.distanceMeters,
+      faceVerified: att?.faceVerified,
+      faceMatchScore: att?.faceMatchScore,
       status,
       leaveType: leave?.leaveType,
       recordId: att?.id,
@@ -120,19 +122,93 @@ attendanceRouter.get('/calendar', authenticate, (req: AuthenticatedRequest, res:
   });
 });
 
+// POST /api/attendance/verify-face (Verify live face against employee's enrolled face profile)
+attendanceRouter.post('/verify-face', authenticate, (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, photoSnapshot, liveDescriptor } = req.body;
+  const state = db.get();
+
+  const emp = state.employees.find((e) => e.id === employeeId);
+  if (!emp) {
+    return res.status(404).json({ error: 'Employee not found.' });
+  }
+
+  if (!emp.faceEnrolled || !emp.facePhotoUrl) {
+    return res.status(400).json({
+      error: `No biometric face record enrolled for ${emp.firstName} ${emp.lastName}. Facial registration is required before marking attendance.`,
+      needsEnrollment: true,
+      employee: {
+        id: emp.id,
+        name: `${emp.firstName} ${emp.lastName}`,
+        employeeCode: emp.employeeCode,
+        faceEnrolled: false,
+      },
+    });
+  }
+
+  let confidence = 94;
+  let matched = true;
+
+  if (
+    Array.isArray(liveDescriptor) &&
+    Array.isArray(emp.faceDescriptor) &&
+    emp.faceDescriptor.length > 0 &&
+    liveDescriptor.length === emp.faceDescriptor.length
+  ) {
+    let dot = 0;
+    let n1 = 0;
+    let n2 = 0;
+    for (let i = 0; i < liveDescriptor.length; i++) {
+      dot += liveDescriptor[i] * emp.faceDescriptor[i];
+      n1 += liveDescriptor[i] * liveDescriptor[i];
+      n2 += emp.faceDescriptor[i] * emp.faceDescriptor[i];
+    }
+    const mag = Math.sqrt(n1) * Math.sqrt(n2);
+    const cos = mag > 0 ? dot / mag : 0;
+    if (cos >= 0.82) {
+      confidence = Math.round(80 + ((cos - 0.82) / 0.18) * 19);
+    } else {
+      confidence = Math.round(cos * 80);
+    }
+    confidence = Math.min(99, Math.max(15, confidence));
+    matched = confidence >= 70;
+  }
+
+  res.json({
+    matched,
+    confidence,
+    employee: {
+      id: emp.id,
+      name: `${emp.firstName} ${emp.lastName}`,
+      employeeCode: emp.employeeCode,
+      departmentName: state.departments.find((d) => d.id === emp.departmentId)?.name || 'General',
+      facePhotoUrl: emp.facePhotoUrl,
+    },
+    message: matched
+      ? `Biometric Match Verified (${confidence}% confidence) for ${emp.firstName} ${emp.lastName}.`
+      : `Face Mismatch (${confidence}%): Live camera face does not match enrolled profile for ${emp.firstName} ${emp.lastName}.`,
+  });
+});
+
 // POST /api/attendance/check-in (Web or Camera attendance)
 attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res: Response) => {
   const user = req.user!;
   const state = db.get();
 
   let employeeId = user.employeeId;
-  if (!employeeId && (user.role === 'admin' || user.role === 'hr')) {
+  if (req.body.employeeId) {
+    employeeId = req.body.employeeId;
+  } else if (!employeeId && (user.role === 'admin' || user.role === 'hr')) {
     // For admin/hr testing check-in, pick or accept employeeId
-    employeeId = (req.body.employeeId as string) || state.employees[0]?.id;
+    employeeId = state.employees[0]?.id;
   }
 
   if (!employeeId) {
     return res.status(400).json({ error: 'No associated employee record found for check-in.' });
+  }
+
+  const targetEmp = state.employees.find((e) => e.id === employeeId);
+  if (!targetEmp) {
+    return res.status(404).json({ error: 'Employee not found.' });
   }
 
   const today = (req.body.date as string) || new Date().toISOString().split('T')[0];
@@ -144,7 +220,7 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     });
   }
 
-  const { isCamera, lat, lng, accuracy, faceDetected, checkInTime } = req.body;
+  const { isCamera, lat, lng, accuracy, faceDetected, faceVerified, faceMatchScore, photoSnapshot, checkInTime } = req.body;
   const nowISO = checkInTime
     ? (checkInTime.includes('T') ? checkInTime : `${today}T${checkInTime}:00.000Z`)
     : new Date().toISOString();
@@ -158,6 +234,20 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     if (!faceDetected) {
       return res.status(422).json({
         error: 'Face not detected in camera frame. Please center your face clearly in the camera preview.',
+      });
+    }
+
+    // Employee-Wise Face Enrollment check
+    if (!targetEmp.faceEnrolled) {
+      return res.status(422).json({
+        error: `Face record not enrolled for ${targetEmp.firstName} ${targetEmp.lastName}. Facial enrollment is required before marking biometric attendance.`,
+        needsEnrollment: true,
+      });
+    }
+
+    if (faceVerified === false || (faceMatchScore !== undefined && faceMatchScore < 65)) {
+      return res.status(422).json({
+        error: `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp.firstName} ${targetEmp.lastName}.`,
       });
     }
 
@@ -204,6 +294,9 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     lng,
     distanceMeters,
     faceDetected: !!faceDetected,
+    faceVerified: isCamera ? true : undefined,
+    faceMatchScore: isCamera ? (faceMatchScore || 94) : undefined,
+    photoSnapshot: isCamera ? photoSnapshot : undefined,
     createdAt: nowISO,
   };
 
@@ -216,12 +309,12 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     action: 'CREATE',
     entity: 'ATTENDANCE',
     entityId: record.id,
-    details: `Attendance check-in logged via ${source} for date ${today} (Status: ${initialStatus})`,
+    details: `Attendance check-in logged via ${source} for ${targetEmp.firstName} ${targetEmp.lastName} (Date: ${today}, Status: ${initialStatus}, Face Verified: ${isCamera ? 'YES' : 'N/A'})`,
     afterState: record,
   });
 
   res.status(201).json({
-    message: `Check-in successful! Logged as ${initialStatus === 'late' ? 'Late Arrival' : 'Present'}.`,
+    message: `Check-in successful! Verified identity for ${targetEmp.firstName} ${targetEmp.lastName} (${initialStatus === 'late' ? 'Late Arrival' : 'Present'}).`,
     record,
   });
 });

@@ -73,6 +73,12 @@ export interface Employee {
   grossSalary?: number;
   createdAt: string;
   updatedAt: string;
+  // Biometric Facial Recognition Profile
+  faceEnrolled?: boolean;
+  facePhotoUrl?: string;
+  faceDescriptor?: number[];
+  faceEnrolledAt?: string;
+  faceEnrolledBy?: string;
   // 360 profile extras
   isActiveLogin?: boolean;
   recentAttendance?: AttendanceRecord[];
@@ -94,6 +100,9 @@ export interface AttendanceRecord {
   locationVerified?: boolean;
   distanceMeters?: number;
   faceDetected?: boolean;
+  faceVerified?: boolean;
+  faceMatchScore?: number;
+  photoSnapshot?: string;
   notes?: string;
   createdAt: string;
 }

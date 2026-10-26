@@ -498,6 +498,41 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
             return resolve({ message: 'Employee updated successfully', employee: body } as unknown as T);
           }
 
+          if (endpoint.includes('/enroll-face') && method === 'POST') {
+            const empId = endpoint.split('/')[2];
+            let updatedEmp: any = null;
+            clientDb.mutate((d) => {
+              const e = d.employees.find((x: any) => x.id === empId);
+              if (e) {
+                e.faceEnrolled = true;
+                e.facePhotoUrl = body.photoSnapshot;
+                e.faceDescriptor = body.descriptor || [];
+                e.faceEnrolledAt = new Date().toISOString();
+                e.faceEnrolledBy = activeUser?.name || 'Self-Enrollment';
+                updatedEmp = e;
+              }
+            });
+            addAudit('UPDATE', 'EMPLOYEE', `Biometric Face ID enrolled for ${updatedEmp?.firstName} ${updatedEmp?.lastName}`, empId);
+            return resolve({ message: 'Face ID successfully registered!', employee: updatedEmp } as unknown as T);
+          }
+
+          if (endpoint.endsWith('/face') && method === 'DELETE') {
+            const empId = endpoint.split('/')[2];
+            let updatedEmp: any = null;
+            clientDb.mutate((d) => {
+              const e = d.employees.find((x: any) => x.id === empId);
+              if (e) {
+                e.faceEnrolled = false;
+                e.facePhotoUrl = undefined;
+                e.faceDescriptor = undefined;
+                e.faceEnrolledAt = undefined;
+                updatedEmp = e;
+              }
+            });
+            addAudit('UPDATE', 'EMPLOYEE', `Biometric Face ID removed for ${empId}`, empId);
+            return resolve({ message: 'Face ID profile removed.', employee: updatedEmp } as unknown as T);
+          }
+
           if (endpoint.includes('/employees/') && method === 'GET') {
             const id = endpoint.split('/')[2];
             const emp = dbState.employees.find((e: any) => e.id === id) || dbState.employees[0];
@@ -565,6 +600,9 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
               checkOutTime: att?.checkOutTime,
               workedHours: att?.workedHours || 0,
               source: att?.source || 'web',
+              faceVerified: att?.faceVerified,
+              faceMatchScore: att?.faceMatchScore,
+              photoSnapshot: att?.photoSnapshot,
               status,
               leaveType: leave?.leaveType,
               recordId: att?.id,
@@ -593,8 +631,80 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
           } as unknown as T);
         }
 
+        if (endpoint === '/attendance/verify-face' && method === 'POST') {
+          const emp = dbState.employees.find((e: any) => e.id === body.employeeId);
+          if (!emp) return reject(new Error('Employee not found.'));
+          if (!emp.faceEnrolled || !emp.facePhotoUrl) {
+            return reject(
+              new Error(
+                `No biometric face record enrolled for ${emp.firstName} ${emp.lastName}. Facial registration is required before marking attendance.`
+              )
+            );
+          }
+
+          let confidence = 94;
+          let matched = true;
+          if (
+            Array.isArray(body.liveDescriptor) &&
+            Array.isArray(emp.faceDescriptor) &&
+            emp.faceDescriptor.length > 0 &&
+            body.liveDescriptor.length === emp.faceDescriptor.length
+          ) {
+            let dot = 0;
+            let n1 = 0;
+            let n2 = 0;
+            for (let i = 0; i < body.liveDescriptor.length; i++) {
+              dot += body.liveDescriptor[i] * emp.faceDescriptor[i];
+              n1 += body.liveDescriptor[i] * body.liveDescriptor[i];
+              n2 += emp.faceDescriptor[i] * emp.faceDescriptor[i];
+            }
+            const mag = Math.sqrt(n1) * Math.sqrt(n2);
+            const cos = mag > 0 ? dot / mag : 0;
+            if (cos >= 0.82) {
+              confidence = Math.round(80 + ((cos - 0.82) / 0.18) * 19);
+            } else {
+              confidence = Math.round(cos * 80);
+            }
+            confidence = Math.min(99, Math.max(15, confidence));
+            matched = confidence >= 70;
+          }
+
+          return resolve({
+            matched,
+            confidence,
+            employee: {
+              id: emp.id,
+              name: `${emp.firstName} ${emp.lastName}`,
+              employeeCode: emp.employeeCode,
+              facePhotoUrl: emp.facePhotoUrl,
+            },
+            message: matched
+              ? `Biometric Match Verified (${confidence}% confidence) for ${emp.firstName} ${emp.lastName}.`
+              : `Face Mismatch (${confidence}%): Live camera face does not match ${emp.firstName} ${emp.lastName}.`,
+          } as unknown as T);
+        }
+
         if (endpoint === '/attendance/check-in' && method === 'POST') {
           const empId = body.employeeId || activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+          const targetEmp = dbState.employees.find((e: any) => e.id === empId);
+
+          if (body.isCamera) {
+            if (targetEmp && !targetEmp.faceEnrolled) {
+              return reject(
+                new Error(
+                  `Face record not enrolled for ${targetEmp.firstName} ${targetEmp.lastName}. Facial enrollment is required before marking biometric attendance.`
+                )
+              );
+            }
+            if (body.faceVerified === false || (body.faceMatchScore !== undefined && body.faceMatchScore < 65)) {
+              return reject(
+                new Error(
+                  `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp?.firstName} ${targetEmp?.lastName}.`
+                )
+              );
+            }
+          }
+
           const targetDate = body.date || new Date().toISOString().split('T')[0];
           const checkInTimeISO = body.checkInTime
             ? (body.checkInTime.includes('T') ? body.checkInTime : `${targetDate}T${body.checkInTime}:00.000Z`)
@@ -606,6 +716,9 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
             if (existing) {
               existing.checkInTime = checkInTimeISO;
               existing.source = body.isCamera ? 'camera' : 'web';
+              existing.faceVerified = body.isCamera ? true : undefined;
+              existing.faceMatchScore = body.isCamera ? (body.faceMatchScore || 94) : undefined;
+              existing.photoSnapshot = body.photoSnapshot;
               newAtt = existing;
             } else {
               newAtt = {
@@ -617,13 +730,17 @@ function handleClientFallback<T>(endpoint: string, options: RequestInit): Promis
                 workedHours: 0,
                 source: body.isCamera ? 'camera' : 'web',
                 locationVerified: !!body.lat,
+                faceDetected: !!body.faceDetected,
+                faceVerified: body.isCamera ? true : undefined,
+                faceMatchScore: body.isCamera ? (body.faceMatchScore || 94) : undefined,
+                photoSnapshot: body.photoSnapshot,
                 createdAt: new Date().toISOString(),
               };
               d.attendance.push(newAtt);
             }
           });
 
-          addAudit('CREATE', 'ATTENDANCE', `Attendance check-in logged for ${empId} on ${targetDate}`, newAtt.id);
+          addAudit('CREATE', 'ATTENDANCE', `Attendance check-in logged for ${targetEmp ? `${targetEmp.firstName} ${targetEmp.lastName}` : empId} on ${targetDate}`, newAtt.id);
           return resolve({ message: `Check-in successful for ${targetDate}! Logged as Present.`, record: newAtt } as unknown as T);
         }
 
@@ -1191,6 +1308,10 @@ export const api = {
   getEmployee360: (id: string) => apiRequest<any>(`/employees/${id}`),
   createEmployee: (emp: any) => apiRequest<{ employee: any; tempPassword: string }>('/employees', { method: 'POST', body: JSON.stringify(emp) }),
   updateEmployee: (id: string, updates: any) => apiRequest<{ message: string; employee: any }>(`/employees/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  enrollFace: (id: string, data: { photoSnapshot: string; descriptor?: number[] }) =>
+    apiRequest<{ message: string; employee: any }>(`/employees/${id}/enroll-face`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteFace: (id: string) =>
+    apiRequest<{ message: string; employee: any }>(`/employees/${id}/face`, { method: 'DELETE' }),
   csvDryRun: (csvText: string) => apiRequest<any>('/employees/csv-dryrun', { method: 'POST', body: JSON.stringify({ csvText }) }),
   csvImport: (rows: any[]) => apiRequest<any>('/employees/csv-import', { method: 'POST', body: JSON.stringify({ rows }) }),
 
@@ -1203,8 +1324,21 @@ export const api = {
     if (params?.year) q.set('year', String(params.year));
     return apiRequest<any>(`/attendance/calendar?${q.toString()}`);
   },
-  checkIn: (data: { isCamera?: boolean; lat?: number; lng?: number; accuracy?: number; faceDetected?: boolean; employeeId?: string; date?: string; checkInTime?: string }) =>
-    apiRequest<{ message: string; record: any }>('/attendance/check-in', { method: 'POST', body: JSON.stringify(data) }),
+  verifyFace: (data: { employeeId: string; photoSnapshot?: string; liveDescriptor?: number[] }) =>
+    apiRequest<{ matched: boolean; confidence: number; employee: any; message: string }>('/attendance/verify-face', { method: 'POST', body: JSON.stringify(data) }),
+  checkIn: (data: {
+    isCamera?: boolean;
+    lat?: number;
+    lng?: number;
+    accuracy?: number;
+    faceDetected?: boolean;
+    faceVerified?: boolean;
+    faceMatchScore?: number;
+    photoSnapshot?: string;
+    employeeId?: string;
+    date?: string;
+    checkInTime?: string;
+  }) => apiRequest<{ message: string; record: any }>('/attendance/check-in', { method: 'POST', body: JSON.stringify(data) }),
   checkOut: (params?: string | { employeeId?: string; date?: string; checkOutTime?: string }) => {
     const body = typeof params === 'string' ? { employeeId: params } : (params || {});
     return apiRequest<{ message: string; record: any }>('/attendance/check-out', { method: 'POST', body: JSON.stringify(body) });

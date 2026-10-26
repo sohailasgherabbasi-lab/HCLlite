@@ -77,6 +77,12 @@ export interface Employee {
   grossSalary: number; // 1.5 * basic
   createdAt: string;
   updatedAt: string;
+  // Biometric Facial Recognition Profile
+  faceEnrolled?: boolean;
+  facePhotoUrl?: string;
+  faceDescriptor?: number[];
+  faceEnrolledAt?: string;
+  faceEnrolledBy?: string;
 }
 
 export interface AttendanceRecord {
@@ -93,6 +99,9 @@ export interface AttendanceRecord {
   lng?: number;
   distanceMeters?: number;
   faceDetected?: boolean;
+  faceVerified?: boolean;
+  faceMatchScore?: number;
+  photoSnapshot?: string;
   notes?: string;
   createdAt: string;
 }

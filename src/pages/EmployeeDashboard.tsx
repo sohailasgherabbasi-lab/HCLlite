@@ -12,7 +12,10 @@ import {
   RefreshCw,
   ArrowRight,
   Megaphone,
+  ScanFace,
+  ShieldCheck,
 } from 'lucide-react';
+import { FaceEnrollmentModal } from '../components/employee/FaceEnrollmentModal.tsx';
 
 interface EmployeeDashboardProps {
   onOpenSmartLeave: () => void;
@@ -48,6 +51,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showFaceModal, setShowFaceModal] = useState(false);
 
   const loadData = async () => {
     try {
@@ -125,6 +129,28 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
+            onClick={() => setShowFaceModal(true)}
+            className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer ${
+              emp.faceEnrolled
+                ? 'bg-indigo-800/80 hover:bg-indigo-700/80 text-white border border-indigo-700/80'
+                : 'bg-amber-400 hover:bg-amber-300 text-neutral-950 animate-pulse'
+            }`}
+            title="Biometric Face ID Profile"
+          >
+            {emp.faceEnrolled ? (
+              <>
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Face ID Active</span>
+              </>
+            ) : (
+              <>
+                <ScanFace className="w-3.5 h-3.5 text-neutral-950" />
+                <span>Enroll Face ID</span>
+              </>
+            )}
+          </button>
+
+          <button
             onClick={onOpenSmartLeave}
             className="flex items-center gap-1.5 px-4 py-2 bg-white text-indigo-900 hover:bg-neutral-100 text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
           >
@@ -196,6 +222,22 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
             </div>
           </div>
 
+          {!emp.faceEnrolled && (
+            <div className="p-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg text-[10px] text-amber-800 dark:text-amber-300 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 text-amber-500" />
+                <span>Face ID required for camera punch</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowFaceModal(true)}
+                className="font-bold underline cursor-pointer"
+              >
+                Enroll Now
+              </button>
+            </div>
+          )}
+
           <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800 flex items-center gap-2">
             {!today.hasCheckedIn ? (
               <>
@@ -209,10 +251,10 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                 <button
                   onClick={onOpenCameraAttendance}
                   disabled={actionLoading || today.status === 'on_leave'}
-                  className="p-2 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 rounded-xl border border-indigo-200 dark:border-indigo-900 cursor-pointer"
-                  title="Camera + Geofence Check-in"
+                  className="p-2 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 rounded-xl border border-indigo-200 dark:border-indigo-900 cursor-pointer flex items-center gap-1 text-xs font-semibold"
+                  title="Biometric Facial Recognition Check-in"
                 >
-                  <Camera className="w-4 h-4" />
+                  <ScanFace className="w-4 h-4 text-indigo-500" />
                 </button>
               </>
             ) : !today.hasCheckedOut ? (
@@ -417,6 +459,18 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
           )}
         </div>
       </div>
+
+      {emp && (
+        <FaceEnrollmentModal
+          isOpen={showFaceModal}
+          onClose={() => setShowFaceModal(false)}
+          employee={emp}
+          onSuccess={(updated) => {
+            loadData();
+            setShowFaceModal(false);
+          }}
+        />
+      )}
     </div>
   );
 };
