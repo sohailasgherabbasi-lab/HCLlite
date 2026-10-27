@@ -14,6 +14,7 @@ import {
   Megaphone,
   ScanFace,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react';
 import { FaceEnrollmentModal } from '../components/employee/FaceEnrollmentModal.tsx';
 
@@ -149,6 +150,29 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
               </>
             )}
           </button>
+
+          {emp.faceEnrolled && (
+            <button
+              onClick={async () => {
+                if (!confirm('Are you sure you want to remove your Face ID biometric profile?')) return;
+                setActionLoading(true);
+                try {
+                  const res = await api.deleteFace(emp.id);
+                  setFeedback({ type: 'success', message: res.message || 'Face ID removed successfully.' });
+                  await loadData();
+                } catch (err: any) {
+                  setFeedback({ type: 'error', message: err.message || 'Failed to remove Face ID.' });
+                } finally {
+                  setActionLoading(false);
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-400/30 text-xs font-semibold rounded-xl cursor-pointer transition-colors"
+              title="Delete your biometric facial profile"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-300" />
+              <span>Delete Face ID</span>
+            </button>
+          )}
 
           <button
             onClick={onOpenSmartLeave}

@@ -397,9 +397,14 @@ class Database {
     const payload = dataToSave || this.data;
     this.saveLocal(payload);
     if (serverFirestore) {
-      setDoc(doc(serverFirestore, 'hcm_state', 'main'), payload).catch((e: any) =>
-        console.warn('[HCM Lite Server] Firestore sync error:', e.message)
-      );
+      try {
+        const cleanPayload = JSON.parse(JSON.stringify(payload));
+        setDoc(doc(serverFirestore, 'hcm_state', 'main'), cleanPayload).catch((e: any) =>
+          console.warn('[HCM Lite Server] Firestore sync error:', e.message)
+        );
+      } catch (err: any) {
+        console.warn('[HCM Lite Server] Firestore serialization error:', err.message);
+      }
     }
   }
 

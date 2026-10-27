@@ -524,10 +524,12 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
               const e = d.employees.find((x: any) => x.id === empId);
               if (e) {
                 e.faceEnrolled = false;
-                e.facePhotoUrl = undefined;
-                e.faceDescriptor = undefined;
-                e.faceEnrolledAt = undefined;
-                updatedEmp = e;
+                delete (e as any).facePhotoUrl;
+                delete (e as any).faceDescriptor;
+                delete (e as any).faceEnrolledAt;
+                delete (e as any).faceEnrolledBy;
+                e.updatedAt = new Date().toISOString();
+                updatedEmp = { ...e };
               }
             });
             addAudit('UPDATE', 'EMPLOYEE', `Biometric Face ID removed for ${empId}`, empId);

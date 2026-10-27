@@ -593,10 +593,10 @@ employeesRouter.delete('/:id/face', authenticate, (req: AuthenticatedRequest, re
     const target = draft.employees.find((e) => e.id === id);
     if (target) {
       target.faceEnrolled = false;
-      target.facePhotoUrl = undefined;
-      target.faceDescriptor = undefined;
-      target.faceEnrolledAt = undefined;
-      target.faceEnrolledBy = undefined;
+      delete (target as any).facePhotoUrl;
+      delete (target as any).faceDescriptor;
+      delete (target as any).faceEnrolledAt;
+      delete (target as any).faceEnrolledBy;
       target.updatedAt = new Date().toISOString();
     }
   });

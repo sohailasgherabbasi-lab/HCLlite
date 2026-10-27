@@ -250,7 +250,8 @@ class ClientDb {
   public async pushToFirestore(): Promise<void> {
     try {
       if (!firestore) return;
-      await setDoc(doc(firestore, 'hcm_state', 'main'), this.data);
+      const cleanData = JSON.parse(JSON.stringify(this.data));
+      await setDoc(doc(firestore, 'hcm_state', 'main'), cleanData);
     } catch (err: any) {
       console.warn('[HCM Lite Client] Failed to push update to Firestore:', err.message);
     }

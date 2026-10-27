@@ -373,15 +373,17 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
     };
   }, [isOpen]);
 
-  // Capture frame snapshot onto canvas
+  // Capture frame snapshot onto canvas as compact verification thumbnail
   const captureSnapshot = (): string | null => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
       return null;
     }
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    const targetW = 240;
+    const targetH = Math.round(targetW * (video.videoHeight / video.videoWidth));
+    canvas.width = targetW;
+    canvas.height = targetH;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
@@ -390,7 +392,7 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
       ctx.scale(-1, 1);
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.85);
+    return canvas.toDataURL('image/jpeg', 0.75);
   };
 
   // Submit attendance check-in
@@ -937,7 +939,10 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
                 {(!targetEmployee?.faceEnrolled || isMismatch) && (
                   <button
                     type="button"
-                    onClick={() => setShowEnrollModal(true)}
+                    onClick={() => {
+                      stopCamera();
+                      setShowEnrollModal(true);
+                    }}
                     className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
                   >
                     <ScanFace className="w-4 h-4" />
@@ -968,12 +973,16 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
       {targetEmployee && (
         <FaceEnrollmentModal
           isOpen={showEnrollModal}
-          onClose={() => setShowEnrollModal(false)}
+          onClose={() => {
+            setShowEnrollModal(false);
+            startCamera();
+          }}
           employee={targetEmployee}
           onSuccess={(updated) => {
             setTargetEmployee(updated);
             setShowEnrollModal(false);
             loadEmployeesAndTarget();
+            startCamera();
           }}
         />
       )}

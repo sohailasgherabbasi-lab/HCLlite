@@ -678,14 +678,41 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
                           ? `Facial baseline profile is active. Enrolled ${emp360.faceEnrolledAt ? new Date(emp360.faceEnrolledAt).toLocaleDateString() : 'Active'}. Ready for camera attendance kiosk.`
                           : 'No biometric record registered. Employee cannot use the facial recognition kiosk until enrolled.'}
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => setEnrollingEmp(emp360)}
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                      >
-                        <ScanFace className="w-3.5 h-3.5" />
-                        <span>{emp360.faceEnrolled ? 'Re-Enroll Face ID' : 'Enroll Face ID Now'}</span>
-                      </button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setEnrollingEmp(emp360)}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                        >
+                          <ScanFace className="w-3.5 h-3.5" />
+                          <span>{emp360.faceEnrolled ? 'Re-Enroll Face ID' : 'Enroll Face ID Now'}</span>
+                        </button>
+                        {emp360.faceEnrolled && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!confirm(`Are you sure you want to remove the biometric Face ID profile for ${emp360.firstName} ${emp360.lastName}?`)) return;
+                              try {
+                                const res = await api.deleteFace(emp360.id);
+                                setEmp360({
+                                  ...emp360,
+                                  faceEnrolled: false,
+                                  facePhotoUrl: undefined,
+                                  faceDescriptor: undefined,
+                                  faceEnrolledAt: undefined,
+                                });
+                                loadData();
+                              } catch (err: any) {
+                                alert(err.message || 'Failed to remove face record');
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete Face Image</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1088,6 +1115,7 @@ EMP-012,Zain,Abideen,zain.abideen@hcmlite.com,+92 322 7778899,Sales & Marketing,
             if (emp360 && emp360.id === updated.id) {
               setEmp360({ ...emp360, ...updated });
             }
+            setEnrollingEmp(null);
           }}
         />
       )}

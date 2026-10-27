@@ -33,6 +33,7 @@ interface FaceEnrollmentModalProps {
     faceEnrolled?: boolean;
     facePhotoUrl?: string;
     faceEnrolledAt?: string;
+    faceDescriptor?: number[];
   };
   onSuccess: (updatedEmployee: any) => void;
 }
@@ -46,7 +47,9 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
+  const [currentEmployee, setCurrentEmployee] = useState(employee);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -64,17 +67,27 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
   const [deleting, setDeleting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const empName = `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Employee';
+  const empName = `${currentEmployee.firstName || ''} ${currentEmployee.lastName || ''}`.trim() || 'Employee';
+
+  // Keep currentEmployee in sync with prop
+  useEffect(() => {
+    setCurrentEmployee(employee);
+  }, [employee]);
 
   // Stop camera tracks cleanly
   const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
-      setStream(null);
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    setStream(null);
+    setCameraStatus('idle');
   }, [stream]);
 
   // Start webcam
@@ -85,13 +98,18 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
       setFeedback(null);
       setCapturedPhoto(null);
 
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
+      // Stop any existing tracks
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
       }
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setCameraStatus('error');
-        setCameraError('Camera access not supported by browser or connection is not secure.');
+        setCameraError('Camera access is not supported by your browser or connection is not secure (requires HTTPS or localhost).');
         return;
       }
 
@@ -102,26 +120,41 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
         const constraints: MediaStreamConstraints = {
           audio: false,
           video: targetDeviceId
-            ? { deviceId: { exact: targetDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+            ? { deviceId: { exact: targetDeviceId }, width: { ideal: 640 }, height: { ideal: 480 } }
+            : { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
         };
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (err: any) {
+      } catch (firstErr: any) {
         try {
+          // Fallback with minimal constraints
           mediaStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-        } catch (fallbackErr: any) {
+        } catch (secondErr: any) {
           setCameraStatus('error');
-          setCameraError(fallbackErr.message || 'Unable to open camera stream. Please check browser permissions.');
+          let msg = 'Could not access camera. Please allow camera permissions in your browser.';
+          if (secondErr.name === 'NotAllowedError' || secondErr.name === 'PermissionDeniedError') {
+            msg = 'Camera permission denied. Please allow camera access in browser site settings.';
+          } else if (secondErr.name === 'NotReadableError' || secondErr.name === 'TrackStartError') {
+            msg = 'Camera is currently locked by another application or tab. Please close other camera windows and click Retry Camera below.';
+          } else if (secondErr.message) {
+            msg = secondErr.message;
+          }
+          setCameraError(msg);
           return;
         }
       }
 
+      streamRef.current = mediaStream;
       setStream(mediaStream);
 
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const vInputs = devices.filter((d) => d.kind === 'videoinput');
         setVideoDevices(vInputs);
+        const activeTrack = mediaStream.getVideoTracks()[0];
+        const activeSettings = activeTrack?.getSettings();
+        if (activeSettings?.deviceId) {
+          setSelectedDeviceId(activeSettings.deviceId);
+        }
       } catch {
         // non-blocking
       }
@@ -133,13 +166,13 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
         try {
           await video.play();
         } catch (e) {
-          console.warn('Video play caught:', e);
+          console.warn('Video play caught in startCamera:', e);
         }
       }
 
       setCameraStatus('ready');
     },
-    [stream, selectedDeviceId]
+    [selectedDeviceId]
   );
 
   // Hook stream to video element
@@ -155,7 +188,7 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
         await video.play();
         setCameraStatus('ready');
       } catch (err) {
-        console.warn('Playback caught:', err);
+        console.warn('Playback caught in stream useEffect:', err);
       }
     };
 
@@ -202,9 +235,11 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
       setCapturedDescriptor(null);
       setFeedback(null);
       setCountdown(null);
+      setCameraStatus('idle');
       return;
     }
 
+    setCurrentEmployee(employee);
     startCamera();
 
     return () => {
@@ -212,14 +247,24 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     };
   }, [isOpen]);
 
-  // Snap photo from live camera
+  // Snap photo from live camera with normalized max 320x320 size for lean Firestore storage
   const handleSnap = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Normalizing resolution prevents Firestore document size limit issues (1MB)
+    const targetSize = 320;
+    const aspect = video.videoWidth / video.videoHeight;
+    let w = targetSize;
+    let h = Math.round(targetSize / aspect);
+    if (aspect < 1) {
+      h = targetSize;
+      w = Math.round(targetSize * aspect);
+    }
+
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -229,8 +274,9 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
     const descriptor = extractFaceBiometrics(canvas);
+    // Compact ~15-20 KB high-fidelity JPEG
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
 
     setCapturedPhoto(dataUrl);
     setCapturedDescriptor(descriptor);
@@ -251,28 +297,37 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     }, 1000);
   };
 
-  // Upload photo from disk
+  // Upload photo from disk with automatic normalization
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
+      const rawDataUrl = event.target?.result as string;
       const img = new Image();
       img.onload = () => {
         const canvas = canvasRef.current || document.createElement('canvas');
-        canvas.width = img.naturalWidth || 400;
-        canvas.height = img.naturalHeight || 400;
+        const targetSize = 320;
+        const aspect = img.naturalWidth / img.naturalHeight;
+        let w = targetSize;
+        let h = Math.round(targetSize / aspect);
+        if (aspect < 1) {
+          h = targetSize;
+          w = Math.round(targetSize * aspect);
+        }
+        canvas.width = w;
+        canvas.height = h;
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           const descriptor = extractFaceBiometrics(canvas);
-          setCapturedPhoto(dataUrl);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          setCapturedPhoto(compressedDataUrl);
           setCapturedDescriptor(descriptor);
         }
       };
-      img.src = dataUrl;
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   };
@@ -293,15 +348,16 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     setSaving(true);
     setFeedback(null);
     try {
-      const res = await api.enrollFace(employee.id, {
+      const res = await api.enrollFace(currentEmployee.id, {
         photoSnapshot: capturedPhoto,
         descriptor: capturedDescriptor || [],
       });
-      setFeedback({ type: 'success', message: res.message });
+      setCurrentEmployee(res.employee);
+      setFeedback({ type: 'success', message: res.message || 'Face ID successfully registered!' });
       onSuccess(res.employee);
       setTimeout(() => {
         onClose();
-      }, 1200);
+      }, 1000);
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Failed to enroll face profile.' });
     } finally {
@@ -317,12 +373,19 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     setDeleting(true);
     setFeedback(null);
     try {
-      const res = await api.deleteFace(employee.id);
-      setFeedback({ type: 'success', message: res.message });
-      onSuccess(res.employee);
+      const res = await api.deleteFace(currentEmployee.id);
+      setCurrentEmployee({
+        ...currentEmployee,
+        faceEnrolled: false,
+        facePhotoUrl: undefined,
+        faceDescriptor: undefined,
+        faceEnrolledAt: undefined,
+      });
+      setFeedback({ type: 'success', message: res.message || 'Face ID profile removed.' });
+      onSuccess(res.employee || { ...currentEmployee, faceEnrolled: false });
       setTimeout(() => {
         onClose();
-      }, 1200);
+      }, 1000);
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Failed to remove face record.' });
     } finally {
@@ -344,7 +407,7 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
             <div>
               <h3 className="text-sm font-bold text-neutral-900 dark:text-white flex items-center gap-2">
                 <span>Biometric Face ID Enrollment</span>
-                {employee.faceEnrolled && (
+                {currentEmployee.faceEnrolled && (
                   <span className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3" />
                     Enrolled
@@ -352,7 +415,7 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
                 )}
               </h3>
               <p className="text-[11px] text-neutral-500 font-mono">
-                {empName} ({employee.employeeCode || 'EMP'}) · {employee.departmentName || 'General'}
+                {empName} ({currentEmployee.employeeCode || 'EMP'}) · {currentEmployee.departmentName || 'General'}
               </p>
             </div>
           </div>
@@ -512,13 +575,23 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
                       <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
                       <p className="text-xs text-neutral-200 font-semibold mb-1">Webcam Not Available</p>
                       <p className="text-[11px] text-neutral-400 max-w-xs mb-3">{cameraError}</p>
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
-                      >
-                        Upload Face Photo Instead
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startCamera()}
+                          className="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer border border-neutral-700"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Retry Camera</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                        >
+                          Upload Face Photo Instead
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -545,7 +618,7 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
                   <div className="absolute bottom-3 left-4 right-4 bg-black/80 backdrop-blur-md p-2.5 rounded-xl border border-white/10 flex items-center justify-between text-xs text-white">
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                      <span>64-Point Facial Descriptor Generated</span>
+                      <span>128-Point Multi-Scale Descriptor Generated</span>
                     </div>
                     <span className="font-mono text-[10px] text-emerald-400">Status: Validated</span>
                   </div>
@@ -563,9 +636,9 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
                   Employee Candidate
                 </span>
                 <div className="flex items-center gap-3">
-                  {employee.facePhotoUrl ? (
+                  {currentEmployee.facePhotoUrl ? (
                     <img
-                      src={employee.facePhotoUrl}
+                      src={currentEmployee.facePhotoUrl}
                       alt={empName}
                       className="w-11 h-11 rounded-xl object-cover border border-neutral-300 dark:border-neutral-700 shadow-xs shrink-0"
                     />
@@ -579,28 +652,42 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
                       {empName}
                     </span>
                     <span className="text-[10px] text-neutral-500 font-mono block truncate">
-                      {employee.employeeCode || 'EMP'} · {employee.departmentName || 'General'}
+                      {currentEmployee.employeeCode || 'EMP'} · {currentEmployee.departmentName || 'General'}
                     </span>
-                    {employee.faceEnrolled && (
+                    {currentEmployee.faceEnrolled ? (
                       <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 mt-0.5">
                         <CheckCircle2 className="w-3 h-3" />
                         <span>Currently Enrolled</span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium inline-flex items-center gap-1 mt-0.5">
+                        <AlertTriangle className="w-3 h-3" />
+                        <span>No Face ID Enrolled</span>
                       </span>
                     )}
                   </div>
                 </div>
 
                 {/* If already has enrolled face, show deletion option */}
-                {employee.faceEnrolled && !capturedPhoto && (
+                {currentEmployee.faceEnrolled && !capturedPhoto && (
                   <button
                     type="button"
                     onClick={handleDeleteFace}
                     disabled={deleting}
-                    className="w-full mt-1 px-2.5 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-rose-200 dark:border-rose-900"
+                    className="w-full mt-1 px-2.5 py-2 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-rose-200 dark:border-rose-900 font-semibold"
                     title="Remove Existing Face Record"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>{deleting ? 'Removing Profile...' : 'Delete Existing Face ID'}</span>
+                    {deleting ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Removing Face Record...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Existing Face ID</span>
+                      </>
+                    )}
                   </button>
                 )}
               </div>
