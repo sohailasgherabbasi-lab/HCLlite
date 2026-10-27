@@ -70,6 +70,14 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   }, []);
 
   const handleWebCheckIn = async () => {
+    if (emp?.faceEnrolled) {
+      setFeedback({
+        type: 'error',
+        message: 'Face ID is enrolled for your profile. Facial biometric authentication via camera is required to mark attendance.',
+      });
+      onOpenCameraAttendance();
+      return;
+    }
     setActionLoading(true);
     setFeedback(null);
     try {
@@ -264,23 +272,34 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
 
           <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800 flex items-center gap-2">
             {!today.hasCheckedIn ? (
-              <>
-                <button
-                  onClick={handleWebCheckIn}
-                  disabled={actionLoading || today.status === 'on_leave'}
-                  className="flex-1 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl transition-colors cursor-pointer"
-                >
-                  Web Check-In
-                </button>
+              emp.faceEnrolled ? (
                 <button
                   onClick={onOpenCameraAttendance}
                   disabled={actionLoading || today.status === 'on_leave'}
-                  className="p-2 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 rounded-xl border border-indigo-200 dark:border-indigo-900 cursor-pointer flex items-center gap-1 text-xs font-semibold"
-                  title="Biometric Facial Recognition Check-in"
+                  className="w-full py-2.5 px-3 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2"
                 >
-                  <ScanFace className="w-4 h-4 text-indigo-500" />
+                  <ScanFace className="w-4 h-4" />
+                  <span>Face ID Punch (Biometric Active)</span>
                 </button>
-              </>
+              ) : (
+                <>
+                  <button
+                    onClick={handleWebCheckIn}
+                    disabled={actionLoading || today.status === 'on_leave'}
+                    className="flex-1 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl transition-colors cursor-pointer"
+                  >
+                    Web Check-In
+                  </button>
+                  <button
+                    onClick={onOpenCameraAttendance}
+                    disabled={actionLoading || today.status === 'on_leave'}
+                    className="p-2 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 rounded-xl border border-indigo-200 dark:border-indigo-900 cursor-pointer flex items-center gap-1 text-xs font-semibold"
+                    title="Biometric Facial Recognition Check-in"
+                  >
+                    <ScanFace className="w-4 h-4 text-indigo-500" />
+                  </button>
+                </>
+              )
             ) : !today.hasCheckedOut ? (
               <button
                 onClick={handleWebCheckOut}

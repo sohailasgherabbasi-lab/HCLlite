@@ -127,7 +127,20 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ onOpenCameraAtte
     setSelectedDate(current.toISOString().split('T')[0]);
   };
 
+  const myEmp = allEmployees.find(
+    (e: any) => e.id === user?.employeeId || (!isEmployee && e.id === todayData?.roster?.[0]?.employeeId)
+  );
+  const isMyFaceEnrolled = myEmp?.faceEnrolled;
+
   const handleWebCheckIn = async () => {
+    if (isMyFaceEnrolled) {
+      setFeedback({
+        type: 'error',
+        message: 'Face ID is enrolled for your profile. Facial biometric authentication via camera is required to mark attendance.',
+      });
+      onOpenCameraAttendance();
+      return;
+    }
     setActionLoading(true);
     setFeedback(null);
     try {
@@ -353,6 +366,15 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ onOpenCameraAtte
                 Completed: In {formatTime(myRosterRecord.checkInTime)} · Out {formatTime(myRosterRecord.checkOutTime)} ({myRosterRecord.workedHours}h)
               </span>
             </div>
+          ) : isMyFaceEnrolled ? (
+            <button
+              onClick={onOpenCameraAttendance}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer shadow-xs"
+              title="Biometric Facial Recognition Check-in"
+            >
+              <ScanFace className="w-3.5 h-3.5" />
+              <span>Biometric Face Punch</span>
+            </button>
           ) : (
             <>
               <button

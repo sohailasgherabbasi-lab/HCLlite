@@ -6,6 +6,7 @@ import {
   computeEmployeePayrollItem,
   calculateAttritionRisk,
   detectAbsenceAnomalies,
+  evaluateBiometricMatch,
 } from '../../server/rules.ts';
 
 const TOKEN_KEY = 'hcm_lite_token';
@@ -699,49 +700,21 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
             );
           }
 
-          let confidence = 0;
-          let matched = false;
-          if (
-            Array.isArray(body.liveDescriptor) &&
-            Array.isArray(emp.faceDescriptor) &&
-            emp.faceDescriptor.length > 0
-          ) {
-            let dot = 0;
-            let n1 = 0;
-            let n2 = 0;
-            const compLen = Math.min(body.liveDescriptor.length, emp.faceDescriptor.length);
-            for (let i = 0; i < compLen; i++) {
-              dot += body.liveDescriptor[i] * emp.faceDescriptor[i];
-              n1 += body.liveDescriptor[i] * body.liveDescriptor[i];
-              n2 += emp.faceDescriptor[i] * emp.faceDescriptor[i];
-            }
-            const mag = Math.sqrt(n1) * Math.sqrt(n2);
-            const cos = mag > 0 ? dot / mag : 0;
-            if (cos >= 0.92) {
-              confidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
-            } else if (cos >= 0.84) {
-              confidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
-            } else if (cos >= 0.78) {
-              confidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
-            } else {
-              confidence = Math.round(Math.max(10, (cos / 0.78) * 45));
-            }
-            confidence = Math.min(99, Math.max(5, confidence));
-            matched = cos >= 0.82 && confidence >= 75;
-          }
+          const bioResult = evaluateBiometricMatch(body.liveDescriptor, emp.faceDescriptor, 75);
 
           return resolve({
-            matched,
-            confidence,
+            matched: bioResult.match,
+            confidence: bioResult.confidence,
+            similarity: bioResult.similarity,
             employee: {
               id: emp.id,
               name: `${emp.firstName} ${emp.lastName}`,
               employeeCode: emp.employeeCode,
               facePhotoUrl: emp.facePhotoUrl,
             },
-            message: matched
-              ? `Biometric Match Verified (${confidence}% confidence) for ${emp.firstName} ${emp.lastName}.`
-              : `Face Mismatch (${confidence}%): Live camera face does not match ${emp.firstName} ${emp.lastName}.`,
+            message: bioResult.match
+              ? `Biometric Match Verified (${bioResult.confidence}% confidence) for ${emp.firstName} ${emp.lastName}.`
+              : `Face Mismatch (${bioResult.confidence}% match): Live camera face does not match ${emp.firstName} ${emp.lastName}. Proxy attendance blocked.`,
           } as unknown as T);
         }
 
@@ -755,6 +728,16 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
 
           const targetEmp = dbState.employees.find((e: any) => e.id === empId);
 
+          // STRICT ANTI-PROXY BIOMETRIC POLICY:
+          // If an employee has Face ID enrolled, web check-in without camera verification is strictly prohibited!
+          if (targetEmp?.faceEnrolled && !body.isCamera) {
+            return reject(
+              new Error(
+                `Biometric Attendance Required: Face ID is enrolled for ${targetEmp.firstName} ${targetEmp.lastName}. Web check-in without facial verification is prohibited. Please use the Camera Kiosk to mark attendance.`
+              )
+            );
+          }
+
           if (body.isCamera) {
             if (!targetEmp || !targetEmp.faceEnrolled || !Array.isArray(targetEmp.faceDescriptor) || targetEmp.faceDescriptor.length === 0) {
               return reject(
@@ -766,37 +749,18 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
 
             // Strict Biometric Vector Check
             if (Array.isArray(body.liveDescriptor) && targetEmp.faceDescriptor.length > 0) {
-              let dot = 0, n1 = 0, n2 = 0;
-              const compLen = Math.min(body.liveDescriptor.length, targetEmp.faceDescriptor.length);
-              for (let i = 0; i < compLen; i++) {
-                dot += body.liveDescriptor[i] * targetEmp.faceDescriptor[i];
-                n1 += body.liveDescriptor[i] * body.liveDescriptor[i];
-                n2 += targetEmp.faceDescriptor[i] * targetEmp.faceDescriptor[i];
-              }
-              const mag = Math.sqrt(n1) * Math.sqrt(n2);
-              const cos = mag > 0 ? dot / mag : 0;
-              let calculatedConfidence = 0;
-              if (cos >= 0.92) {
-                calculatedConfidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
-              } else if (cos >= 0.84) {
-                calculatedConfidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
-              } else if (cos >= 0.78) {
-                calculatedConfidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
-              } else {
-                calculatedConfidence = Math.round(Math.max(10, (cos / 0.78) * 45));
-              }
-
-              if (cos < 0.82 || calculatedConfidence < 75) {
+              const bioResult = evaluateBiometricMatch(body.liveDescriptor, targetEmp.faceDescriptor, 75);
+              if (!bioResult.match) {
                 return reject(
                   new Error(
-                    `Biometric Authentication Failed (${calculatedConfidence}% match): Live camera face does NOT match the enrolled profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance is strictly prohibited.`
+                    `Biometric Authentication Failed (${bioResult.confidence}% match): Live camera face does NOT match the enrolled profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance is strictly prohibited.`
                   )
                 );
               }
             } else if (body.faceVerified === false || (body.faceMatchScore !== undefined && body.faceMatchScore < 75)) {
               return reject(
                 new Error(
-                  `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp?.firstName} ${targetEmp?.lastName}.`
+                  `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp?.firstName} ${targetEmp?.lastName}. Proxy attendance blocked.`
                 )
               );
             }

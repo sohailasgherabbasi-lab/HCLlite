@@ -6,7 +6,7 @@ import {
   AuthenticatedRequest,
   logAudit,
 } from '../auth.js';
-import { evaluateCheckInStatus, haversineDistanceMeters } from '../rules.js';
+import { evaluateCheckInStatus, haversineDistanceMeters, evaluateBiometricMatch } from '../rules.js';
 
 export const attendanceRouter = Router();
 
@@ -145,41 +145,12 @@ attendanceRouter.post('/verify-face', authenticate, (req: AuthenticatedRequest, 
     });
   }
 
-  let confidence = 0;
-  let matched = false;
-
-  if (
-    Array.isArray(liveDescriptor) &&
-    Array.isArray(emp.faceDescriptor) &&
-    emp.faceDescriptor.length > 0
-  ) {
-    let dot = 0;
-    let n1 = 0;
-    let n2 = 0;
-    const compLen = Math.min(liveDescriptor.length, emp.faceDescriptor.length);
-    for (let i = 0; i < compLen; i++) {
-      dot += liveDescriptor[i] * emp.faceDescriptor[i];
-      n1 += liveDescriptor[i] * liveDescriptor[i];
-      n2 += emp.faceDescriptor[i] * emp.faceDescriptor[i];
-    }
-    const mag = Math.sqrt(n1) * Math.sqrt(n2);
-    const cos = mag > 0 ? dot / mag : 0;
-    if (cos >= 0.92) {
-      confidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
-    } else if (cos >= 0.84) {
-      confidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
-    } else if (cos >= 0.78) {
-      confidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
-    } else {
-      confidence = Math.round(Math.max(10, (cos / 0.78) * 45));
-    }
-    confidence = Math.min(99, Math.max(5, confidence));
-    matched = cos >= 0.82 && confidence >= 75;
-  }
+  const bioResult = evaluateBiometricMatch(liveDescriptor, emp.faceDescriptor || [], 75);
 
   res.json({
-    matched,
-    confidence,
+    matched: bioResult.match,
+    confidence: bioResult.confidence,
+    similarity: bioResult.similarity,
     employee: {
       id: emp.id,
       name: `${emp.firstName} ${emp.lastName}`,
@@ -187,9 +158,9 @@ attendanceRouter.post('/verify-face', authenticate, (req: AuthenticatedRequest, 
       departmentName: state.departments.find((d) => d.id === emp.departmentId)?.name || 'General',
       facePhotoUrl: emp.facePhotoUrl,
     },
-    message: matched
-      ? `Biometric Match Verified (${confidence}% confidence) for ${emp.firstName} ${emp.lastName}.`
-      : `Face Mismatch (${confidence}%): Live camera face does not match enrolled profile for ${emp.firstName} ${emp.lastName}.`,
+    message: bioResult.match
+      ? `Biometric Match Verified (${bioResult.confidence}% confidence) for ${emp.firstName} ${emp.lastName}.`
+      : `Face Mismatch (${bioResult.confidence}% match): Live camera face does not match enrolled profile for ${emp.firstName} ${emp.lastName}. Proxy attendance blocked.`,
   });
 });
 
@@ -229,6 +200,16 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
   }
 
   const { isCamera, lat, lng, accuracy, faceDetected, faceVerified, faceMatchScore, liveDescriptor, photoSnapshot, checkInTime } = req.body;
+
+  // STRICT ANTI-PROXY BIOMETRIC POLICY:
+  // If an employee has Face ID enrolled, web check-in without camera verification is strictly prohibited!
+  if (targetEmp.faceEnrolled && !isCamera) {
+    return res.status(422).json({
+      error: `Biometric Attendance Required: Face ID is enrolled for ${targetEmp.firstName} ${targetEmp.lastName}. Web check-in without facial verification is prohibited. Please use the Camera Kiosk to mark attendance.`,
+      needsBiometricPunch: true,
+    });
+  }
+
   const nowISO = checkInTime
     ? (checkInTime.includes('T') ? checkInTime : `${today}T${checkInTime}:00.000Z`)
     : new Date().toISOString();
@@ -253,36 +234,18 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
       });
     }
 
-    // Strict Biometric Vector Authentication
+    // Strict Gold-Standard Biometric Vector Authentication
     if (Array.isArray(liveDescriptor) && targetEmp.faceDescriptor.length > 0) {
-      let dot = 0, n1 = 0, n2 = 0;
-      const compLen = Math.min(liveDescriptor.length, targetEmp.faceDescriptor.length);
-      for (let i = 0; i < compLen; i++) {
-        dot += liveDescriptor[i] * targetEmp.faceDescriptor[i];
-        n1 += liveDescriptor[i] * liveDescriptor[i];
-        n2 += targetEmp.faceDescriptor[i] * targetEmp.faceDescriptor[i];
-      }
-      const mag = Math.sqrt(n1) * Math.sqrt(n2);
-      const cos = mag > 0 ? dot / mag : 0;
-      let calculatedConfidence = 0;
-      if (cos >= 0.92) {
-        calculatedConfidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
-      } else if (cos >= 0.84) {
-        calculatedConfidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
-      } else if (cos >= 0.78) {
-        calculatedConfidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
-      } else {
-        calculatedConfidence = Math.round(Math.max(10, (cos / 0.78) * 45));
-      }
-
-      if (cos < 0.82 || calculatedConfidence < 75) {
+      const bioResult = evaluateBiometricMatch(liveDescriptor, targetEmp.faceDescriptor, 75);
+      if (!bioResult.match) {
         return res.status(422).json({
-          error: `Biometric Authentication Failed (${calculatedConfidence}% match): Live camera face does NOT match the enrolled profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance is strictly prohibited.`,
+          error: `Biometric Authentication Failed (${bioResult.confidence}% match): Live camera face does NOT match the enrolled profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance is strictly prohibited.`,
+          confidence: bioResult.confidence,
         });
       }
     } else if (faceVerified === false || (faceMatchScore !== undefined && faceMatchScore < 75)) {
       return res.status(422).json({
-        error: `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp.firstName} ${targetEmp.lastName}.`,
+        error: `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance blocked.`,
       });
     }
 
