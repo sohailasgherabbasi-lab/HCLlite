@@ -145,32 +145,36 @@ attendanceRouter.post('/verify-face', authenticate, (req: AuthenticatedRequest, 
     });
   }
 
-  let confidence = 94;
-  let matched = true;
+  let confidence = 0;
+  let matched = false;
 
   if (
     Array.isArray(liveDescriptor) &&
     Array.isArray(emp.faceDescriptor) &&
-    emp.faceDescriptor.length > 0 &&
-    liveDescriptor.length === emp.faceDescriptor.length
+    emp.faceDescriptor.length > 0
   ) {
     let dot = 0;
     let n1 = 0;
     let n2 = 0;
-    for (let i = 0; i < liveDescriptor.length; i++) {
+    const compLen = Math.min(liveDescriptor.length, emp.faceDescriptor.length);
+    for (let i = 0; i < compLen; i++) {
       dot += liveDescriptor[i] * emp.faceDescriptor[i];
       n1 += liveDescriptor[i] * liveDescriptor[i];
       n2 += emp.faceDescriptor[i] * emp.faceDescriptor[i];
     }
     const mag = Math.sqrt(n1) * Math.sqrt(n2);
     const cos = mag > 0 ? dot / mag : 0;
-    if (cos >= 0.82) {
-      confidence = Math.round(80 + ((cos - 0.82) / 0.18) * 19);
+    if (cos >= 0.92) {
+      confidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
+    } else if (cos >= 0.84) {
+      confidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
+    } else if (cos >= 0.78) {
+      confidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
     } else {
-      confidence = Math.round(cos * 80);
+      confidence = Math.round(Math.max(10, (cos / 0.78) * 45));
     }
-    confidence = Math.min(99, Math.max(15, confidence));
-    matched = confidence >= 70;
+    confidence = Math.min(99, Math.max(5, confidence));
+    matched = cos >= 0.82 && confidence >= 75;
   }
 
   res.json({
@@ -196,9 +200,13 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
 
   let employeeId = user.employeeId;
   if (req.body.employeeId) {
+    if (user.role === 'employee' && user.employeeId && user.employeeId !== req.body.employeeId) {
+      return res.status(403).json({
+        error: 'Access Denied: You cannot mark attendance for another employee.',
+      });
+    }
     employeeId = req.body.employeeId;
   } else if (!employeeId && (user.role === 'admin' || user.role === 'hr')) {
-    // For admin/hr testing check-in, pick or accept employeeId
     employeeId = state.employees[0]?.id;
   }
 
@@ -220,7 +228,7 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     });
   }
 
-  const { isCamera, lat, lng, accuracy, faceDetected, faceVerified, faceMatchScore, photoSnapshot, checkInTime } = req.body;
+  const { isCamera, lat, lng, accuracy, faceDetected, faceVerified, faceMatchScore, liveDescriptor, photoSnapshot, checkInTime } = req.body;
   const nowISO = checkInTime
     ? (checkInTime.includes('T') ? checkInTime : `${today}T${checkInTime}:00.000Z`)
     : new Date().toISOString();
@@ -238,18 +246,46 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     }
 
     // Employee-Wise Face Enrollment check
-    if (!targetEmp.faceEnrolled) {
+    if (!targetEmp.faceEnrolled || !Array.isArray(targetEmp.faceDescriptor) || targetEmp.faceDescriptor.length === 0) {
       return res.status(422).json({
         error: `Face record not enrolled for ${targetEmp.firstName} ${targetEmp.lastName}. Facial enrollment is required before marking biometric attendance.`,
         needsEnrollment: true,
       });
     }
 
-    if (faceVerified === false || (faceMatchScore !== undefined && faceMatchScore < 65)) {
+    // Strict Biometric Vector Authentication
+    if (Array.isArray(liveDescriptor) && targetEmp.faceDescriptor.length > 0) {
+      let dot = 0, n1 = 0, n2 = 0;
+      const compLen = Math.min(liveDescriptor.length, targetEmp.faceDescriptor.length);
+      for (let i = 0; i < compLen; i++) {
+        dot += liveDescriptor[i] * targetEmp.faceDescriptor[i];
+        n1 += liveDescriptor[i] * liveDescriptor[i];
+        n2 += targetEmp.faceDescriptor[i] * targetEmp.faceDescriptor[i];
+      }
+      const mag = Math.sqrt(n1) * Math.sqrt(n2);
+      const cos = mag > 0 ? dot / mag : 0;
+      let calculatedConfidence = 0;
+      if (cos >= 0.92) {
+        calculatedConfidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
+      } else if (cos >= 0.84) {
+        calculatedConfidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
+      } else if (cos >= 0.78) {
+        calculatedConfidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
+      } else {
+        calculatedConfidence = Math.round(Math.max(10, (cos / 0.78) * 45));
+      }
+
+      if (cos < 0.82 || calculatedConfidence < 75) {
+        return res.status(422).json({
+          error: `Biometric Authentication Failed (${calculatedConfidence}% match): Live camera face does NOT match the enrolled profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance is strictly prohibited.`,
+        });
+      }
+    } else if (faceVerified === false || (faceMatchScore !== undefined && faceMatchScore < 75)) {
       return res.status(422).json({
         error: `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp.firstName} ${targetEmp.lastName}.`,
       });
     }
+
 
     if (lat === undefined || lng === undefined) {
       return res.status(422).json({

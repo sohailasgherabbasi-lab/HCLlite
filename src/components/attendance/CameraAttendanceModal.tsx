@@ -14,6 +14,8 @@ import {
   ShieldCheck,
   Sparkles,
   UserX,
+  Search,
+  Users,
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
@@ -21,6 +23,7 @@ import {
   assessFaceCaptureQuality,
   extractFaceBiometrics,
   compareFaceBiometrics,
+  identifyFaceAcrossEmployees,
   BiometricMatchResult,
 } from '../../utils/faceBiometrics.ts';
 import { FaceEnrollmentModal } from '../employee/FaceEnrollmentModal.tsx';
@@ -54,6 +57,7 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
   const { user, settings } = useAuth();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const latestLiveDescriptorRef = useRef<number[] | null>(null);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
@@ -64,6 +68,10 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
   const [allEmployees, setAllEmployees] = useState<any[]>([]);
   const [selectedEmpId, setSelectedEmpId] = useState<string>('');
   const [targetEmployee, setTargetEmployee] = useState<any | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Mode: 'verify' (1:1 Verification against selected employee) or 'auto_identify' (1:N Auto Face Scan)
+  const [kioskMode, setKioskMode] = useState<'verify' | 'auto_identify'>('verify');
 
   // Face recognition & verification state
   const [faceDetected, setFaceDetected] = useState(false);
@@ -265,7 +273,7 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
 
   // Periodic Live Biometric Recognition Loop
   useEffect(() => {
-    if (!isOpen || cameraStatus !== 'ready' || !targetEmployee?.faceEnrolled) {
+    if (!isOpen || cameraStatus !== 'ready') {
       return;
     }
 
@@ -276,7 +284,7 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
 
       canvas.width = 320;
       canvas.height = 240;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return;
 
       if (isMirrored) {
@@ -296,29 +304,56 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
       setFaceDetected(true);
       setIsComparing(true);
 
-      // 2. Extract live biometric feature descriptor
+      // 2. Extract multi-scale 128-d live biometric feature descriptor
       const liveDescriptor = extractFaceBiometrics(canvas);
+      latestLiveDescriptorRef.current = liveDescriptor;
 
-      // 3. Compare with target employee's enrolled face descriptor
-      const enrolledDescriptor = targetEmployee.faceDescriptor;
-      if (Array.isArray(enrolledDescriptor) && enrolledDescriptor.length > 0) {
-        const comp = compareFaceBiometrics(liveDescriptor, enrolledDescriptor, 0.72);
-        setMatchResult(comp);
+      // 3. Authenticate face
+      if (kioskMode === 'auto_identify' && allEmployees.length > 0) {
+        // Auto-search across all enrolled employees
+        const auto = identifyFaceAcrossEmployees(liveDescriptor, allEmployees, 75);
+        if (auto.match && auto.matchedEmployee) {
+          setTargetEmployee(auto.matchedEmployee);
+          setSelectedEmpId(auto.matchedEmployee.id);
+          setMatchResult({
+            match: true,
+            similarity: auto.bestSimilarity,
+            confidence: auto.bestConfidence,
+            scoreLabel: auto.bestConfidence >= 88 ? 'Very High' : 'High',
+            reason: `Biometric Identity Verified: ${auto.matchedEmployee.firstName} ${auto.matchedEmployee.lastName}`,
+          });
+        } else {
+          setMatchResult({
+            match: false,
+            similarity: auto.bestSimilarity,
+            confidence: auto.bestConfidence,
+            scoreLabel: 'Mismatch',
+            reason: auto.message,
+          });
+        }
       } else {
-        // Fallback confidence if descriptor was saved without array
-        setMatchResult({
-          match: true,
-          similarity: 0.88,
-          confidence: 88,
-          scoreLabel: 'High',
-          reason: 'Facial profile verified with registered record.',
-        });
+        // Targeted 1:1 Biometric Verification
+        const enrolledDescriptor = targetEmployee?.faceDescriptor;
+        if (Array.isArray(enrolledDescriptor) && enrolledDescriptor.length > 0) {
+          const comp = compareFaceBiometrics(liveDescriptor, enrolledDescriptor, 0.82);
+          setMatchResult(comp);
+        } else {
+          setMatchResult({
+            match: false,
+            similarity: 0,
+            confidence: 0,
+            scoreLabel: 'Mismatch',
+            reason: targetEmployee?.firstName
+              ? `No biometric profile registered for ${targetEmployee.firstName}. Please enroll Face ID first.`
+              : 'Please select an employee profile to authenticate.',
+          });
+        }
       }
       setIsComparing(false);
     }, 450);
 
     return () => clearInterval(interval);
-  }, [isOpen, cameraStatus, targetEmployee, isMirrored]);
+  }, [isOpen, cameraStatus, targetEmployee, isMirrored, kioskMode, allEmployees]);
 
   // Initialize on modal open
   useEffect(() => {
@@ -360,19 +395,19 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
 
   // Submit attendance check-in
   const handleCheckIn = async () => {
-    if (!targetEmployee?.faceEnrolled) {
-      setErrorMessage(`Please enroll Face ID for ${targetEmployee?.firstName || 'this employee'} first.`);
+    if (!targetEmployee?.faceEnrolled || !Array.isArray(targetEmployee?.faceDescriptor) || targetEmployee.faceDescriptor.length === 0) {
+      setErrorMessage(`Please enroll Face ID for ${targetEmployee?.firstName || 'this employee'} before punching.`);
       return;
     }
 
     if (!faceDetected) {
-      setErrorMessage('No face detected in camera. Please center your face inside the guide.');
+      setErrorMessage('No face detected in camera. Please center your face inside the guide oval.');
       return;
     }
 
-    if (matchResult && !matchResult.match) {
+    if (!matchResult || !matchResult.match || matchResult.confidence < 75) {
       setErrorMessage(
-        `Facial verification mismatch (${matchResult.confidence}% confidence). The face in front of the camera does not match the enrolled biometric record for ${targetEmployee.firstName} ${targetEmployee.lastName}.`
+        `Biometric Authentication Failed (${matchResult?.confidence ?? 0}% match). The face in front of the camera does NOT match ${targetEmployee.firstName} ${targetEmployee.lastName}. You cannot mark attendance for another employee.`
       );
       return;
     }
@@ -392,7 +427,8 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
         accuracy: coords?.accuracy ?? 20,
         faceDetected: true,
         faceVerified: true,
-        faceMatchScore: matchResult?.confidence || 92,
+        faceMatchScore: matchResult.confidence,
+        liveDescriptor: latestLiveDescriptorRef.current || undefined,
         photoSnapshot: photoSnapshot || undefined,
       };
 
@@ -414,8 +450,8 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
   const currentDistance = coords ? haversineDistanceMeters(coords.lat, coords.lng, officeLat, officeLng) : 0;
   const isWithinPerimeter = currentDistance <= officeRadius;
 
-  const isVerified = matchResult?.match === true;
-  const isMismatch = faceDetected && matchResult && !matchResult.match;
+  const isVerified = matchResult?.match === true && (matchResult?.confidence ?? 0) >= 75;
+  const isMismatch = faceDetected && (!matchResult || !matchResult.match || (matchResult.confidence < 75));
 
   return (
     <>
@@ -682,12 +718,45 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
             </div>
 
             {/* RIGHT COLUMN: Dedicated Vertical Control Panel */}
-            <div className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/70 p-4 flex flex-col justify-between overflow-y-auto space-y-4">
+            <div className="w-full lg:w-84 shrink-0 border-t lg:border-t-0 lg:border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/70 p-4 flex flex-col justify-between overflow-y-auto space-y-4">
               <div className="space-y-3.5">
-                {/* Section Header */}
-                <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 block">
-                  Identity Verification
-                </span>
+                {/* Mode Selector: 1:1 Targeted vs 1:N Auto-Identify */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 block">
+                      Biometric Kiosk Mode
+                    </span>
+                    <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono font-semibold">
+                      128-D Anti-Proxy
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-neutral-200/60 dark:bg-neutral-800 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setKioskMode('verify')}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        kioskMode === 'verify'
+                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs'
+                          : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>1:1 Targeted</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setKioskMode('auto_identify')}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        kioskMode === 'auto_identify'
+                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs'
+                          : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <ScanFace className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>1:N Auto-Detect</span>
+                    </button>
+                  </div>
+                </div>
 
                 {/* Target Employee Profile Card */}
                 <div className="p-3 bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700 shadow-xs space-y-2.5">
@@ -709,38 +778,60 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
                         {targetEmployee?.firstName} {targetEmployee?.lastName}
                       </div>
                       <div className="text-[10px] text-neutral-500 font-mono truncate">
-                        {targetEmployee?.employeeCode || 'EMP'} · {targetEmployee?.departmentName || 'Engineering'}
+                        {targetEmployee?.employeeCode || 'EMP'} · {targetEmployee?.departmentName || 'General'}
                       </div>
-                      <div className="mt-1">
+                      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                         {targetEmployee?.faceEnrolled ? (
-                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md">
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-200/50 dark:border-emerald-800/40">
                             <ShieldCheck className="w-3 h-3" />
-                            <span>Face ID Enrolled</span>
+                            <span>Enrolled Profile</span>
                           </span>
                         ) : (
-                          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold inline-flex items-center gap-1 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md">
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold inline-flex items-center gap-1 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-200/50 dark:border-amber-800/40">
                             <AlertTriangle className="w-3 h-3" />
                             <span>Enrollment Needed</span>
+                          </span>
+                        )}
+                        {kioskMode === 'auto_identify' && (
+                          <span className="text-[9px] bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 px-1.5 py-0.5 rounded font-mono">
+                            Auto 1:N
                           </span>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  {/* Switch employee dropdown if Admin/HR */}
-                  {canSelectOtherEmployees && allEmployees.length > 0 && (
-                    <div className="pt-2 border-t border-neutral-100 dark:border-neutral-700/60">
-                      <label className="text-[10px] text-neutral-500 block mb-1 font-medium">Switch Target Employee:</label>
+                  {/* Switch employee dropdown & search if Admin/HR */}
+                  {canSelectOtherEmployees && allEmployees.length > 0 && kioskMode === 'verify' && (
+                    <div className="pt-2 border-t border-neutral-100 dark:border-neutral-700/60 space-y-1.5">
+                      <label className="text-[10px] text-neutral-500 block font-medium">Switch Target Employee:</label>
+                      <div className="relative">
+                        <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+                        <input
+                          type="text"
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          placeholder="Filter by name or EMP code..."
+                          className="w-full text-[11px] bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg pl-7 pr-2.5 py-1 text-neutral-800 dark:text-neutral-200"
+                        />
+                      </div>
                       <select
                         value={selectedEmpId}
                         onChange={(e) => handleSelectEmployee(e.target.value)}
                         className="w-full text-xs bg-neutral-50 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-xl px-2.5 py-1.5 text-neutral-800 dark:text-neutral-200 cursor-pointer shadow-xs focus:ring-2 focus:ring-indigo-500"
                       >
-                        {allEmployees.map((emp) => (
-                          <option key={emp.id} value={emp.id}>
-                            {emp.firstName} {emp.lastName} ({emp.employeeCode}) {emp.faceEnrolled ? '✓' : '⚠️'}
-                          </option>
-                        ))}
+                        {allEmployees
+                          .filter((emp) => {
+                            if (!searchTerm) return true;
+                            const query = searchTerm.toLowerCase();
+                            const full = `${emp.firstName || ''} ${emp.lastName || ''} ${emp.employeeCode || ''}`.toLowerCase();
+                            return full.includes(query);
+                          })
+                          .map((emp) => (
+                            <option key={emp.id} value={emp.id}>
+                              {emp.firstName} {emp.lastName} ({emp.employeeCode}) {emp.faceEnrolled ? '✓ Enrolled' : '⚠️ Unenrolled'}
+                            </option>
+                          ))}
                       </select>
                     </div>
                   )}
@@ -748,47 +839,67 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
 
                 {/* Biometric Match Feedback Card */}
                 <div
-                  className={`p-3 rounded-2xl border transition-all text-xs space-y-1.5 ${
+                  className={`p-3 rounded-2xl border transition-all text-xs space-y-2 ${
                     !targetEmployee?.faceEnrolled
-                      ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300'
+                      ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
                       : isVerified
-                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 shadow-xs'
                       : isMismatch
-                      ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-300'
-                      : 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300'
+                      ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-400 dark:border-rose-700 text-rose-900 dark:text-rose-200 shadow-xs'
+                      : 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800 text-indigo-900 dark:text-indigo-200'
                   }`}
                 >
-                  <div className="font-bold flex items-center gap-1.5">
-                    {!targetEmployee?.faceEnrolled ? (
-                      <>
-                        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-                        <span>Biometrics Required</span>
-                      </>
-                    ) : isVerified ? (
-                      <>
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <span>Face Match Confirmed ({matchResult?.confidence}%)</span>
-                      </>
-                    ) : isMismatch ? (
-                      <>
-                        <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-                        <span>Face Mismatch ({matchResult?.confidence}%)</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin text-indigo-500 shrink-0" />
-                        <span>Analyzing Live Face...</span>
-                      </>
+                  <div className="flex items-center justify-between font-bold">
+                    <div className="flex items-center gap-1.5">
+                      {!targetEmployee?.faceEnrolled ? (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                          <span>Enrollment Required</span>
+                        </>
+                      ) : isVerified ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                          <span>Identity Verified</span>
+                        </>
+                      ) : isMismatch ? (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+                          <span>Face Mismatch Detected</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-indigo-500 shrink-0" />
+                          <span>Scanning Live Biometrics...</span>
+                        </>
+                      )}
+                    </div>
+                    {matchResult && targetEmployee?.faceEnrolled && (
+                      <span className="font-mono text-[11px] font-bold">
+                        {matchResult.confidence}%
+                      </span>
                     )}
                   </div>
-                  <p className="text-[11px] leading-relaxed opacity-90">
+
+                  {/* Visual Confidence Progress Bar */}
+                  {targetEmployee?.faceEnrolled && faceDetected && (
+                    <div className="w-full bg-black/10 dark:bg-black/30 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 ${
+                          isVerified ? 'bg-emerald-500' : 'bg-rose-500'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.max(0, matchResult?.confidence ?? 0))}%` }}
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[11px] leading-relaxed">
                     {!targetEmployee?.faceEnrolled
-                      ? 'No face enrolled for this employee. Click "Enroll Face ID Now" below.'
+                      ? 'This profile does not have an enrolled biometric baseline. Please click "Enroll Face ID Now" below.'
                       : isVerified
-                      ? 'Facial signature matches stored template. Press "Confirm Biometric Punch" below.'
+                      ? `Biometric match confirmed (${matchResult?.confidence}% confidence ≥ 75% threshold). Proxy punch verified.`
                       : isMismatch
-                      ? 'The person in front of the camera does not match the registered profile.'
-                      : 'Look straight at camera with eyes open inside oval.'}
+                      ? `The live face in front of camera does NOT match ${targetEmployee?.firstName} ${targetEmployee?.lastName}. Proxy attendance is strictly prohibited.`
+                      : 'Position face directly in front of camera with good lighting.'}
                   </p>
                 </div>
               </div>
@@ -800,30 +911,37 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
                   type="button"
                   onClick={handleCheckIn}
                   disabled={submitting || !targetEmployee?.faceEnrolled || !isVerified}
-                  className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-200 dark:disabled:bg-neutral-800 disabled:text-neutral-400 dark:disabled:text-neutral-600 disabled:opacity-75 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                  className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-200 dark:disabled:bg-neutral-800 disabled:text-neutral-400 dark:disabled:text-neutral-600 disabled:opacity-75 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 shadow-md transition-all cursor-pointer"
                 >
-                  {submitting ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Recording Punch...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Confirm Biometric Punch</span>
-                    </>
+                  <div className="flex items-center gap-2">
+                    {submitting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Recording Punch...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Confirm Biometric Punch</span>
+                      </>
+                    )}
+                  </div>
+                  {!isVerified && targetEmployee?.faceEnrolled && faceDetected && (
+                    <span className="text-[10px] font-normal text-rose-500 dark:text-rose-400">
+                      Face Mismatch — Punch Blocked
+                    </span>
                   )}
                 </button>
 
                 {/* If Not Enrolled: Quick Enroll Button */}
-                {!targetEmployee?.faceEnrolled && (
+                {(!targetEmployee?.faceEnrolled || isMismatch) && (
                   <button
                     type="button"
                     onClick={() => setShowEnrollModal(true)}
                     className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
                   >
                     <ScanFace className="w-4 h-4" />
-                    <span>Enroll Face ID Now</span>
+                    <span>{targetEmployee?.faceEnrolled ? 'Re-Enroll / Calibrate Face ID' : 'Enroll Face ID Now'}</span>
                   </button>
                 )}
 
@@ -838,7 +956,7 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
                 </button>
 
                 <div className="text-[10px] text-center text-neutral-400 font-mono pt-1">
-                  Security: 64-Point Cosine Metric · Geofenced
+                  Security: 128-D Biometric Vectors · Anti-Proxy Calibrated · Geofenced
                 </div>
               </div>
             </div>

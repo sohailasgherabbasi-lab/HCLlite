@@ -689,7 +689,7 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
         if (endpoint === '/attendance/verify-face' && method === 'POST') {
           const emp = dbState.employees.find((e: any) => e.id === body.employeeId);
           if (!emp) return reject(new Error('Employee not found.'));
-          if (!emp.faceEnrolled || !emp.facePhotoUrl) {
+          if (!emp.faceEnrolled || !Array.isArray(emp.faceDescriptor) || emp.faceDescriptor.length === 0) {
             return reject(
               new Error(
                 `No biometric face record enrolled for ${emp.firstName} ${emp.lastName}. Facial registration is required before marking attendance.`
@@ -697,31 +697,35 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
             );
           }
 
-          let confidence = 94;
-          let matched = true;
+          let confidence = 0;
+          let matched = false;
           if (
             Array.isArray(body.liveDescriptor) &&
             Array.isArray(emp.faceDescriptor) &&
-            emp.faceDescriptor.length > 0 &&
-            body.liveDescriptor.length === emp.faceDescriptor.length
+            emp.faceDescriptor.length > 0
           ) {
             let dot = 0;
             let n1 = 0;
             let n2 = 0;
-            for (let i = 0; i < body.liveDescriptor.length; i++) {
+            const compLen = Math.min(body.liveDescriptor.length, emp.faceDescriptor.length);
+            for (let i = 0; i < compLen; i++) {
               dot += body.liveDescriptor[i] * emp.faceDescriptor[i];
               n1 += body.liveDescriptor[i] * body.liveDescriptor[i];
               n2 += emp.faceDescriptor[i] * emp.faceDescriptor[i];
             }
             const mag = Math.sqrt(n1) * Math.sqrt(n2);
             const cos = mag > 0 ? dot / mag : 0;
-            if (cos >= 0.82) {
-              confidence = Math.round(80 + ((cos - 0.82) / 0.18) * 19);
+            if (cos >= 0.92) {
+              confidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
+            } else if (cos >= 0.84) {
+              confidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
+            } else if (cos >= 0.78) {
+              confidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
             } else {
-              confidence = Math.round(cos * 80);
+              confidence = Math.round(Math.max(10, (cos / 0.78) * 45));
             }
-            confidence = Math.min(99, Math.max(15, confidence));
-            matched = confidence >= 70;
+            confidence = Math.min(99, Math.max(5, confidence));
+            matched = cos >= 0.82 && confidence >= 75;
           }
 
           return resolve({
@@ -741,17 +745,53 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
 
         if (endpoint === '/attendance/check-in' && method === 'POST') {
           const empId = body.employeeId || activeUser.employeeId || dbState.employees[0]?.id || 'emp_1';
+
+          // Prevent employee role from marking attendance for anyone else
+          if (activeUser.role === 'employee' && activeUser.employeeId && activeUser.employeeId !== empId) {
+            return reject(new Error('Access Denied: You cannot mark attendance for another employee.'));
+          }
+
           const targetEmp = dbState.employees.find((e: any) => e.id === empId);
 
           if (body.isCamera) {
-            if (targetEmp && !targetEmp.faceEnrolled) {
+            if (!targetEmp || !targetEmp.faceEnrolled || !Array.isArray(targetEmp.faceDescriptor) || targetEmp.faceDescriptor.length === 0) {
               return reject(
                 new Error(
-                  `Face record not enrolled for ${targetEmp.firstName} ${targetEmp.lastName}. Facial enrollment is required before marking biometric attendance.`
+                  `Face record not enrolled for ${targetEmp?.firstName || empId} ${targetEmp?.lastName || ''}. Facial enrollment is required before marking biometric attendance.`
                 )
               );
             }
-            if (body.faceVerified === false || (body.faceMatchScore !== undefined && body.faceMatchScore < 65)) {
+
+            // Strict Biometric Vector Check
+            if (Array.isArray(body.liveDescriptor) && targetEmp.faceDescriptor.length > 0) {
+              let dot = 0, n1 = 0, n2 = 0;
+              const compLen = Math.min(body.liveDescriptor.length, targetEmp.faceDescriptor.length);
+              for (let i = 0; i < compLen; i++) {
+                dot += body.liveDescriptor[i] * targetEmp.faceDescriptor[i];
+                n1 += body.liveDescriptor[i] * body.liveDescriptor[i];
+                n2 += targetEmp.faceDescriptor[i] * targetEmp.faceDescriptor[i];
+              }
+              const mag = Math.sqrt(n1) * Math.sqrt(n2);
+              const cos = mag > 0 ? dot / mag : 0;
+              let calculatedConfidence = 0;
+              if (cos >= 0.92) {
+                calculatedConfidence = Math.round(90 + ((cos - 0.92) / 0.08) * 9);
+              } else if (cos >= 0.84) {
+                calculatedConfidence = Math.round(78 + ((cos - 0.84) / 0.08) * 11);
+              } else if (cos >= 0.78) {
+                calculatedConfidence = Math.round(62 + ((cos - 0.78) / 0.06) * 15);
+              } else {
+                calculatedConfidence = Math.round(Math.max(10, (cos / 0.78) * 45));
+              }
+
+              if (cos < 0.82 || calculatedConfidence < 75) {
+                return reject(
+                  new Error(
+                    `Biometric Authentication Failed (${calculatedConfidence}% match): Live camera face does NOT match the enrolled profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance is strictly prohibited.`
+                  )
+                );
+              }
+            } else if (body.faceVerified === false || (body.faceMatchScore !== undefined && body.faceMatchScore < 75)) {
               return reject(
                 new Error(
                   `Facial verification failed: Live camera face does not match the enrolled biometric profile for ${targetEmp?.firstName} ${targetEmp?.lastName}.`
