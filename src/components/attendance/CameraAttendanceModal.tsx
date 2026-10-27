@@ -19,9 +19,12 @@ import {
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { getDistance, isPointWithinRadius } from 'geolib';
 import {
   assessFaceCaptureQuality,
   extractFaceBiometrics,
+  loadFaceApiModels,
+  detectAndExtractFaceApiDescriptor,
   compareFaceBiometrics,
   identifyFaceAcrossEmployees,
   BiometricMatchResult,
@@ -35,18 +38,10 @@ interface CameraAttendanceModalProps {
 }
 
 function haversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371e3; // Earth radius in meters
-  const phi1 = (lat1 * Math.PI) / 180;
-  const phi2 = (lat2 * Math.PI) / 180;
-  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
-  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
-
-  const a =
-    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return Math.round(R * c);
+  return getDistance(
+    { latitude: lat1, longitude: lon1 },
+    { latitude: lat2, longitude: lon2 }
+  );
 }
 
 export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
@@ -93,6 +88,7 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
   const [punchSuccessData, setPunchSuccessData] = useState<{ name: string; time: string; confidence: number } | null>(null);
 
   const hasPunchedRef = useRef(false);
+  const isRecognizingRef = useRef(false);
   const autoPunchTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastMatchTimeRef = useRef<number>(0);
   const lastMatchResultRef = useRef<BiometricMatchResult | null>(null);
@@ -372,130 +368,128 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
     }
   };
 
-  // Periodic Live Biometric Recognition Loop with Auto-Punch & Movement Hysteresis
+  // Periodic Live Deep Biometric Recognition Loop with Auto-Punch & Movement Hysteresis
   useEffect(() => {
     if (!isOpen || cameraStatus !== 'ready') {
       return;
     }
 
-    const interval = setInterval(() => {
-      if (hasPunchedRef.current || submitting) return;
+    const interval = setInterval(async () => {
+      if (hasPunchedRef.current || submitting || isRecognizingRef.current) return;
       const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return;
+      if (!video || video.videoWidth === 0 || video.videoHeight === 0) return;
 
-      canvas.width = 320;
-      canvas.height = 240;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return;
+      isRecognizingRef.current = true;
 
-      if (isMirrored) {
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-      }
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      try {
+        // 1. Detect face and extract 128-d deep neural descriptor using @vladmandic/face-api
+        const extraction = await detectAndExtractFaceApiDescriptor(video);
 
-      // 1. Check face presence & quality
-      const quality = assessFaceCaptureQuality(canvas);
-      if (!quality.hasFacePresence) {
-        // If user's face is momentarily obscured or moving, retain match for 1500ms
-        if (Date.now() - lastMatchTimeRef.current > 1500) {
-          setFaceDetected(false);
-          setMatchResult(null);
-          setAutoPunchCountdown(null);
-          if (autoPunchTimerRef.current) {
-            clearTimeout(autoPunchTimerRef.current);
-            autoPunchTimerRef.current = null;
-          }
-        }
-        return;
-      }
-
-      setFaceDetected(true);
-      setIsComparing(true);
-
-      // 2. Extract multi-scale 128-d live biometric feature descriptor
-      const liveDescriptor = extractFaceBiometrics(canvas);
-      latestLiveDescriptorRef.current = liveDescriptor;
-
-      // 3. Authenticate face
-      let freshResult: BiometricMatchResult | null = null;
-      let matchedEmp = targetEmployee;
-
-      if (kioskMode === 'auto_identify' && allEmployees.length > 0) {
-        // Auto-search across all enrolled employees
-        const auto = identifyFaceAcrossEmployees(liveDescriptor, allEmployees, 70);
-        if (auto.match && auto.matchedEmployee) {
-          matchedEmp = auto.matchedEmployee;
-          setTargetEmployee(auto.matchedEmployee);
-          setSelectedEmpId(auto.matchedEmployee.id);
-          freshResult = {
-            match: true,
-            similarity: auto.bestSimilarity,
-            confidence: auto.bestConfidence,
-            scoreLabel: auto.bestConfidence >= 85 ? 'Very High' : 'High',
-            reason: `Biometric Identity Verified: ${auto.matchedEmployee.firstName} ${auto.matchedEmployee.lastName}`,
-          };
-        } else {
-          freshResult = {
-            match: false,
-            similarity: auto.bestSimilarity,
-            confidence: auto.bestConfidence,
-            scoreLabel: 'Mismatch',
-            reason: auto.message,
-          };
-        }
-      } else {
-        // Targeted 1:1 Biometric Verification
-        const enrolledDescriptor = targetEmployee?.faceDescriptor;
-        if (Array.isArray(enrolledDescriptor) && enrolledDescriptor.length > 0) {
-          freshResult = compareFaceBiometrics(liveDescriptor, enrolledDescriptor, 70);
-        } else {
-          freshResult = {
-            match: false,
-            similarity: 0,
-            confidence: 0,
-            scoreLabel: 'Mismatch',
-            reason: targetEmployee?.firstName
-              ? `No biometric profile registered for ${targetEmployee.firstName}. Please enroll Face ID first.`
-              : 'Please select an employee profile to authenticate.',
-          };
-        }
-      }
-
-      // 4. Hysteresis Smoothing & Immediate Auto-Punch
-      if (freshResult.match) {
-        lastMatchTimeRef.current = Date.now();
-        lastMatchResultRef.current = freshResult;
-        setMatchResult(freshResult);
-
-        // Immediate Auto-Punch trigger on confirmed face match
-        if (autoPunch && !hasPunchedRef.current && !submitting) {
-          if (!autoPunchTimerRef.current) {
-            setAutoPunchCountdown(1);
-            autoPunchTimerRef.current = setTimeout(() => {
+        if (!extraction.hasFace || !extraction.descriptor) {
+          // If user's face is momentarily obscured or moving, retain match for 1500ms
+          if (Date.now() - lastMatchTimeRef.current > 1500) {
+            setFaceDetected(false);
+            setMatchResult(null);
+            setAutoPunchCountdown(null);
+            if (autoPunchTimerRef.current) {
+              clearTimeout(autoPunchTimerRef.current);
               autoPunchTimerRef.current = null;
-              executePunch(freshResult!, matchedEmp);
-            }, 600); // 600ms brief confirmation pause before touchless punch
+            }
           }
+          return;
         }
-      } else {
-        // If current frame dipped slightly from moving a little or shifting gaze:
-        // Hold the verified match for up to 2000ms so moving does NOT drop the match!
-        const timeSinceLastMatch = Date.now() - lastMatchTimeRef.current;
-        if (timeSinceLastMatch < 2000 && lastMatchResultRef.current?.match) {
-          setMatchResult(lastMatchResultRef.current);
-        } else {
-          setMatchResult(freshResult);
-          setAutoPunchCountdown(null);
-          if (autoPunchTimerRef.current) {
-            clearTimeout(autoPunchTimerRef.current);
-            autoPunchTimerRef.current = null;
-          }
-        }
-      }
 
-      setIsComparing(false);
+        setFaceDetected(true);
+        setIsComparing(true);
+
+        const liveDescriptor = extraction.descriptor;
+        latestLiveDescriptorRef.current = liveDescriptor;
+
+        // 2. Authenticate face against enrolled employee
+        let freshResult: BiometricMatchResult | null = null;
+        let matchedEmp = targetEmployee;
+
+        if (kioskMode === 'auto_identify' && allEmployees.length > 0) {
+          // Auto-search across all enrolled employees
+          const auto = identifyFaceAcrossEmployees(liveDescriptor, allEmployees, 70);
+          if (auto.match && auto.matchedEmployee) {
+            matchedEmp = auto.matchedEmployee;
+            setTargetEmployee(auto.matchedEmployee);
+            setSelectedEmpId(auto.matchedEmployee.id);
+            freshResult = {
+              match: true,
+              similarity: auto.bestSimilarity,
+              distance: auto.bestDistance,
+              confidence: auto.bestConfidence,
+              scoreLabel: auto.bestConfidence >= 85 ? 'Very High' : 'High',
+              reason: `Biometric Identity Verified: ${auto.matchedEmployee.firstName} ${auto.matchedEmployee.lastName}`,
+            };
+          } else {
+            freshResult = {
+              match: false,
+              similarity: auto.bestSimilarity,
+              distance: auto.bestDistance,
+              confidence: auto.bestConfidence,
+              scoreLabel: 'Mismatch',
+              reason: auto.message,
+            };
+          }
+        } else {
+          // Targeted 1:1 Biometric Verification
+          const enrolledDescriptor = targetEmployee?.faceDescriptor;
+          if (Array.isArray(enrolledDescriptor) && enrolledDescriptor.length > 0) {
+            freshResult = compareFaceBiometrics(liveDescriptor, enrolledDescriptor, 70);
+          } else {
+            freshResult = {
+              match: false,
+              similarity: 0,
+              distance: 9.99,
+              confidence: 0,
+              scoreLabel: 'Mismatch',
+              reason: targetEmployee?.firstName
+                ? `No biometric profile registered for ${targetEmployee.firstName}. Please enroll Face ID first.`
+                : 'Please select an employee profile to authenticate.',
+            };
+          }
+        }
+
+        // 3. Hysteresis Smoothing & Immediate Auto-Punch
+        if (freshResult.match) {
+          lastMatchTimeRef.current = Date.now();
+          lastMatchResultRef.current = freshResult;
+          setMatchResult(freshResult);
+
+          // Immediate Auto-Punch trigger on confirmed face match
+          if (autoPunch && !hasPunchedRef.current && !submitting) {
+            if (!autoPunchTimerRef.current) {
+              setAutoPunchCountdown(1);
+              autoPunchTimerRef.current = setTimeout(() => {
+                autoPunchTimerRef.current = null;
+                executePunch(freshResult!, matchedEmp);
+              }, 600); // 600ms brief confirmation pause before touchless punch
+            }
+          }
+        } else {
+          // If current frame dipped slightly from moving a little or shifting gaze:
+          // Hold the verified match for up to 2000ms so moving does NOT drop the match!
+          const timeSinceLastMatch = Date.now() - lastMatchTimeRef.current;
+          if (timeSinceLastMatch < 2000 && lastMatchResultRef.current?.match) {
+            setMatchResult(lastMatchResultRef.current);
+          } else {
+            setMatchResult(freshResult);
+            setAutoPunchCountdown(null);
+            if (autoPunchTimerRef.current) {
+              clearTimeout(autoPunchTimerRef.current);
+              autoPunchTimerRef.current = null;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Face detection cycle error:', err);
+      } finally {
+        isRecognizingRef.current = false;
+        setIsComparing(false);
+      }
     }, 380);
 
     return () => clearInterval(interval);
@@ -522,6 +516,8 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
     hasPunchedRef.current = false;
     setAutoPunchCountdown(null);
     setPunchSuccessData(null);
+    // Preload neural face models and load employees
+    loadFaceApiModels().catch((e) => console.warn('Preload face models:', e));
     loadEmployeesAndTarget();
     startCamera();
     fetchLocation();

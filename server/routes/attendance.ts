@@ -6,7 +6,7 @@ import {
   AuthenticatedRequest,
   logAudit,
 } from '../auth.js';
-import { evaluateCheckInStatus, haversineDistanceMeters, evaluateBiometricMatch } from '../rules.js';
+import { evaluateCheckInStatus, haversineDistanceMeters, isWithinOfficeGeofence, evaluateBiometricMatch } from '../rules.js';
 
 export const attendanceRouter = Router();
 
@@ -266,8 +266,9 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     const officeLng = state.settings.officeLng;
     const radius = state.settings.officeRadiusMeters;
 
+    const isInsideGeofence = isWithinOfficeGeofence(lat, lng, officeLat, officeLng, radius);
     distanceMeters = haversineDistanceMeters(lat, lng, officeLat, officeLng);
-    if (distanceMeters > radius) {
+    if (!isInsideGeofence) {
       return res.status(422).json({
         error: `Location outside permitted office perimeter. You are ${distanceMeters}m away (maximum allowed radius is ${radius}m).`,
         distanceMeters,
