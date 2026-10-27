@@ -749,7 +749,7 @@ async function handleClientFallback<T>(endpoint: string, options: RequestInit): 
 
             // Strict Biometric Vector Check
             if (Array.isArray(body.liveDescriptor) && targetEmp.faceDescriptor.length > 0) {
-              const bioResult = evaluateBiometricMatch(body.liveDescriptor, targetEmp.faceDescriptor, 75);
+              const bioResult = evaluateBiometricMatch(body.liveDescriptor, targetEmp.faceDescriptor, 70);
               if (!bioResult.match) {
                 return reject(
                   new Error(

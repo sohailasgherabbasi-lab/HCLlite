@@ -145,7 +145,7 @@ attendanceRouter.post('/verify-face', authenticate, (req: AuthenticatedRequest, 
     });
   }
 
-  const bioResult = evaluateBiometricMatch(liveDescriptor, emp.faceDescriptor || [], 75);
+  const bioResult = evaluateBiometricMatch(liveDescriptor, emp.faceDescriptor || [], 70);
 
   res.json({
     matched: bioResult.match,
@@ -236,7 +236,7 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
 
     // Strict Gold-Standard Biometric Vector Authentication
     if (Array.isArray(liveDescriptor) && targetEmp.faceDescriptor.length > 0) {
-      const bioResult = evaluateBiometricMatch(liveDescriptor, targetEmp.faceDescriptor, 75);
+      const bioResult = evaluateBiometricMatch(liveDescriptor, targetEmp.faceDescriptor, 70);
       if (!bioResult.match) {
         return res.status(422).json({
           error: `Biometric Authentication Failed (${bioResult.confidence}% match): Live camera face does NOT match the enrolled profile for ${targetEmp.firstName} ${targetEmp.lastName}. Proxy attendance is strictly prohibited.`,

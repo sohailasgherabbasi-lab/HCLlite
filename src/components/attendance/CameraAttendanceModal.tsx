@@ -87,6 +87,16 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
+  // Auto-punch & Match Hysteresis state
+  const [autoPunch, setAutoPunch] = useState(true);
+  const [autoPunchCountdown, setAutoPunchCountdown] = useState<number | null>(null);
+  const [punchSuccessData, setPunchSuccessData] = useState<{ name: string; time: string; confidence: number } | null>(null);
+
+  const hasPunchedRef = useRef(false);
+  const autoPunchTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMatchTimeRef = useRef<number>(0);
+  const lastMatchResultRef = useRef<BiometricMatchResult | null>(null);
+
   // Quick Face Enrollment modal state
   const [showEnrollModal, setShowEnrollModal] = useState(false);
 
@@ -271,13 +281,105 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
     );
   }, [settings]);
 
-  // Periodic Live Biometric Recognition Loop
+  // Play subtle audio confirmation chime
+  const playSuccessChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      const now = ctx.currentTime;
+      osc.frequency.setValueAtTime(523.25, now); // C5
+      osc.frequency.setValueAtTime(659.25, now + 0.12); // E5
+      osc.frequency.setValueAtTime(783.99, now + 0.24); // G5
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc.start(now);
+      osc.stop(now + 0.6);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Submit attendance check-in (both auto-punch and manual button)
+  const executePunch = async (matchedResultToUse: BiometricMatchResult, empToUse: any) => {
+    if (hasPunchedRef.current || submitting) return;
+    if (!empToUse?.faceEnrolled || !Array.isArray(empToUse?.faceDescriptor) || empToUse.faceDescriptor.length === 0) {
+      setErrorMessage(`Please enroll Face ID for ${empToUse?.firstName || 'this employee'} before punching.`);
+      return;
+    }
+
+    if (!matchedResultToUse || !matchedResultToUse.match || matchedResultToUse.confidence < 70) {
+      setErrorMessage(
+        `Biometric Authentication Failed (${matchedResultToUse?.confidence ?? 0}% match). Live face does not match ${empToUse.firstName}.`
+      );
+      return;
+    }
+
+    hasPunchedRef.current = true;
+    setSubmitting(true);
+    setErrorMessage('');
+    setAutoPunchCountdown(null);
+
+    try {
+      const officeLat = settings?.officeLat || 24.8607;
+      const officeLng = settings?.officeLng || 67.0011;
+      const photoSnapshot = captureSnapshot();
+
+      const payload = {
+        employeeId: empToUse.id,
+        isCamera: true,
+        lat: coords?.lat ?? officeLat,
+        lng: coords?.lng ?? officeLng,
+        accuracy: coords?.accuracy ?? 20,
+        faceDetected: true,
+        faceVerified: true,
+        faceMatchScore: matchedResultToUse.confidence,
+        liveDescriptor: latestLiveDescriptorRef.current || empToUse.faceDescriptor,
+        photoSnapshot: photoSnapshot || undefined,
+      };
+
+      await api.checkIn(payload);
+      playSuccessChime();
+
+      const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setPunchSuccessData({
+        name: `${empToUse.firstName} ${empToUse.lastName}`,
+        time: nowTime,
+        confidence: matchedResultToUse.confidence,
+      });
+
+      // Automatically close modal after celebration
+      setTimeout(() => {
+        onSuccess();
+        onClose();
+      }, 1600);
+    } catch (err: any) {
+      hasPunchedRef.current = false;
+      setErrorMessage(err.message || 'Camera check-in failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCheckIn = () => {
+    if (matchResult && targetEmployee) {
+      executePunch(matchResult, targetEmployee);
+    }
+  };
+
+  // Periodic Live Biometric Recognition Loop with Auto-Punch & Movement Hysteresis
   useEffect(() => {
     if (!isOpen || cameraStatus !== 'ready') {
       return;
     }
 
     const interval = setInterval(() => {
+      if (hasPunchedRef.current || submitting) return;
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return;
@@ -296,8 +398,16 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
       // 1. Check face presence & quality
       const quality = assessFaceCaptureQuality(canvas);
       if (!quality.hasFacePresence) {
-        setFaceDetected(false);
-        setMatchResult(null);
+        // If user's face is momentarily obscured or moving, retain match for 1500ms
+        if (Date.now() - lastMatchTimeRef.current > 1500) {
+          setFaceDetected(false);
+          setMatchResult(null);
+          setAutoPunchCountdown(null);
+          if (autoPunchTimerRef.current) {
+            clearTimeout(autoPunchTimerRef.current);
+            autoPunchTimerRef.current = null;
+          }
+        }
         return;
       }
 
@@ -309,36 +419,39 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
       latestLiveDescriptorRef.current = liveDescriptor;
 
       // 3. Authenticate face
+      let freshResult: BiometricMatchResult | null = null;
+      let matchedEmp = targetEmployee;
+
       if (kioskMode === 'auto_identify' && allEmployees.length > 0) {
         // Auto-search across all enrolled employees
-        const auto = identifyFaceAcrossEmployees(liveDescriptor, allEmployees, 75);
+        const auto = identifyFaceAcrossEmployees(liveDescriptor, allEmployees, 70);
         if (auto.match && auto.matchedEmployee) {
+          matchedEmp = auto.matchedEmployee;
           setTargetEmployee(auto.matchedEmployee);
           setSelectedEmpId(auto.matchedEmployee.id);
-          setMatchResult({
+          freshResult = {
             match: true,
             similarity: auto.bestSimilarity,
             confidence: auto.bestConfidence,
-            scoreLabel: auto.bestConfidence >= 88 ? 'Very High' : 'High',
+            scoreLabel: auto.bestConfidence >= 85 ? 'Very High' : 'High',
             reason: `Biometric Identity Verified: ${auto.matchedEmployee.firstName} ${auto.matchedEmployee.lastName}`,
-          });
+          };
         } else {
-          setMatchResult({
+          freshResult = {
             match: false,
             similarity: auto.bestSimilarity,
             confidence: auto.bestConfidence,
             scoreLabel: 'Mismatch',
             reason: auto.message,
-          });
+          };
         }
       } else {
         // Targeted 1:1 Biometric Verification
         const enrolledDescriptor = targetEmployee?.faceDescriptor;
         if (Array.isArray(enrolledDescriptor) && enrolledDescriptor.length > 0) {
-          const comp = compareFaceBiometrics(liveDescriptor, enrolledDescriptor, 0.82);
-          setMatchResult(comp);
+          freshResult = compareFaceBiometrics(liveDescriptor, enrolledDescriptor, 70);
         } else {
-          setMatchResult({
+          freshResult = {
             match: false,
             similarity: 0,
             confidence: 0,
@@ -346,14 +459,47 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
             reason: targetEmployee?.firstName
               ? `No biometric profile registered for ${targetEmployee.firstName}. Please enroll Face ID first.`
               : 'Please select an employee profile to authenticate.',
-          });
+          };
         }
       }
+
+      // 4. Hysteresis Smoothing & Immediate Auto-Punch
+      if (freshResult.match) {
+        lastMatchTimeRef.current = Date.now();
+        lastMatchResultRef.current = freshResult;
+        setMatchResult(freshResult);
+
+        // Immediate Auto-Punch trigger on confirmed face match
+        if (autoPunch && !hasPunchedRef.current && !submitting) {
+          if (!autoPunchTimerRef.current) {
+            setAutoPunchCountdown(1);
+            autoPunchTimerRef.current = setTimeout(() => {
+              autoPunchTimerRef.current = null;
+              executePunch(freshResult!, matchedEmp);
+            }, 600); // 600ms brief confirmation pause before touchless punch
+          }
+        }
+      } else {
+        // If current frame dipped slightly from moving a little or shifting gaze:
+        // Hold the verified match for up to 2000ms so moving does NOT drop the match!
+        const timeSinceLastMatch = Date.now() - lastMatchTimeRef.current;
+        if (timeSinceLastMatch < 2000 && lastMatchResultRef.current?.match) {
+          setMatchResult(lastMatchResultRef.current);
+        } else {
+          setMatchResult(freshResult);
+          setAutoPunchCountdown(null);
+          if (autoPunchTimerRef.current) {
+            clearTimeout(autoPunchTimerRef.current);
+            autoPunchTimerRef.current = null;
+          }
+        }
+      }
+
       setIsComparing(false);
-    }, 450);
+    }, 380);
 
     return () => clearInterval(interval);
-  }, [isOpen, cameraStatus, targetEmployee, isMirrored, kioskMode, allEmployees]);
+  }, [isOpen, cameraStatus, targetEmployee, isMirrored, kioskMode, allEmployees, autoPunch, submitting]);
 
   // Initialize on modal open
   useEffect(() => {
@@ -361,15 +507,31 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
       stopCamera();
       setMatchResult(null);
       setFaceDetected(false);
+      setAutoPunchCountdown(null);
+      setPunchSuccessData(null);
+      hasPunchedRef.current = false;
+      lastMatchTimeRef.current = 0;
+      lastMatchResultRef.current = null;
+      if (autoPunchTimerRef.current) {
+        clearTimeout(autoPunchTimerRef.current);
+        autoPunchTimerRef.current = null;
+      }
       return;
     }
 
+    hasPunchedRef.current = false;
+    setAutoPunchCountdown(null);
+    setPunchSuccessData(null);
     loadEmployeesAndTarget();
     startCamera();
     fetchLocation();
 
     return () => {
       stopCamera();
+      if (autoPunchTimerRef.current) {
+        clearTimeout(autoPunchTimerRef.current);
+        autoPunchTimerRef.current = null;
+      }
     };
   }, [isOpen]);
 
@@ -395,55 +557,6 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
     return canvas.toDataURL('image/jpeg', 0.75);
   };
 
-  // Submit attendance check-in
-  const handleCheckIn = async () => {
-    if (!targetEmployee?.faceEnrolled || !Array.isArray(targetEmployee?.faceDescriptor) || targetEmployee.faceDescriptor.length === 0) {
-      setErrorMessage(`Please enroll Face ID for ${targetEmployee?.firstName || 'this employee'} before punching.`);
-      return;
-    }
-
-    if (!faceDetected) {
-      setErrorMessage('No face detected in camera. Please center your face inside the guide oval.');
-      return;
-    }
-
-    if (!matchResult || !matchResult.match || matchResult.confidence < 75) {
-      setErrorMessage(
-        `Biometric Authentication Failed (${matchResult?.confidence ?? 0}% match). The face in front of the camera does NOT match ${targetEmployee.firstName} ${targetEmployee.lastName}. You cannot mark attendance for another employee.`
-      );
-      return;
-    }
-
-    setSubmitting(true);
-    setErrorMessage('');
-    try {
-      const officeLat = settings?.officeLat || 24.8607;
-      const officeLng = settings?.officeLng || 67.0011;
-      const photoSnapshot = captureSnapshot();
-
-      const payload = {
-        employeeId: targetEmployee.id,
-        isCamera: true,
-        lat: coords?.lat ?? officeLat,
-        lng: coords?.lng ?? officeLng,
-        accuracy: coords?.accuracy ?? 20,
-        faceDetected: true,
-        faceVerified: true,
-        faceMatchScore: matchResult.confidence,
-        liveDescriptor: latestLiveDescriptorRef.current || undefined,
-        photoSnapshot: photoSnapshot || undefined,
-      };
-
-      await api.checkIn(payload);
-      onSuccess();
-      onClose();
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Camera check-in failed');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   if (!isOpen) return null;
 
   const officeLat = settings?.officeLat || 24.8607;
@@ -452,8 +565,8 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
   const currentDistance = coords ? haversineDistanceMeters(coords.lat, coords.lng, officeLat, officeLng) : 0;
   const isWithinPerimeter = currentDistance <= officeRadius;
 
-  const isVerified = matchResult?.match === true && (matchResult?.confidence ?? 0) >= 75;
-  const isMismatch = faceDetected && (!matchResult || !matchResult.match || (matchResult.confidence < 75));
+  const isVerified = matchResult?.match === true && (matchResult?.confidence ?? 0) >= 70;
+  const isMismatch = faceDetected && (!matchResult || !matchResult.match || (matchResult.confidence < 70));
 
   return (
     <>
@@ -468,11 +581,12 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-neutral-900 dark:text-white flex items-center gap-2">
                   <span>Facial Recognition Attendance Kiosk</span>
-                  <span className="text-[10px] bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold px-2 py-0.5 rounded-full">
-                    Biometric 1:1 Matching
+                  <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Sparkles className="w-2.5 h-2.5 text-emerald-500" />
+                    Touchless Auto-Punch
                   </span>
                 </h3>
-                <p className="text-[11px] text-neutral-500">Live facial identity verification & perimeter validation</p>
+                <p className="text-[11px] text-neutral-500">Instant facial recognition & automated hands-free attendance</p>
               </div>
             </div>
             <button
@@ -563,6 +677,46 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
                 />
 
                 <canvas ref={canvasRef} className="hidden" />
+
+                {/* Auto-Punch In Progress Banner */}
+                {autoPunchCountdown !== null && !punchSuccessData && (
+                  <div className="absolute inset-x-6 top-16 z-20 flex items-center justify-center animate-in fade-in zoom-in duration-150 pointer-events-none">
+                    <div className="bg-emerald-600/95 backdrop-blur-md text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-300 pointer-events-auto">
+                      <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent animate-spin shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold block">
+                          Face Matched ({matchResult?.confidence}%)! Marking Attendance Automatically...
+                        </span>
+                        <span className="text-[10px] text-emerald-100 font-mono">
+                          Touchless hands-free check-in in progress
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Celebration Overlay on Successful Punch */}
+                {punchSuccessData && (
+                  <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-emerald-950/92 backdrop-blur-md p-6 text-center text-white animate-in zoom-in duration-200">
+                    <div className="w-16 h-16 rounded-full bg-emerald-500/30 border-2 border-emerald-400 flex items-center justify-center text-emerald-300 mb-3 animate-bounce shadow-[0_0_30px_rgba(16,185,129,0.5)]">
+                      <CheckCircle2 className="w-10 h-10 text-emerald-300" />
+                    </div>
+                    <h3 className="text-xl font-extrabold text-white mb-1">
+                      Attendance Punched Successfully!
+                    </h3>
+                    <p className="text-sm text-emerald-200 font-bold mb-3">
+                      {punchSuccessData.name}
+                    </p>
+                    <div className="inline-flex items-center gap-3 bg-black/50 px-4 py-1.5 rounded-full border border-emerald-400/40 text-xs font-mono text-emerald-300 shadow-md">
+                      <span>Time: {punchSuccessData.time}</span>
+                      <span>·</span>
+                      <span>Match: {punchSuccessData.confidence}%</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-300/80 mt-4 font-mono">
+                      ✓ Biometric verified · Window closing...
+                    </p>
+                  </div>
+                )}
 
                 {/* Live HUD Overlay */}
                 {cameraStatus === 'ready' && (
@@ -898,7 +1052,7 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
                     {!targetEmployee?.faceEnrolled
                       ? 'This profile does not have an enrolled biometric baseline. Please click "Enroll Face ID Now" below.'
                       : isVerified
-                      ? `Biometric match confirmed (${matchResult?.confidence}% confidence ≥ 75% threshold). Proxy punch verified.`
+                      ? `Biometric match confirmed (${matchResult?.confidence}% confidence ≥ 70% threshold). Proxy punch blocked.`
                       : isMismatch
                       ? `The live face in front of camera does NOT match ${targetEmployee?.firstName} ${targetEmployee?.lastName}. Proxy attendance is strictly prohibited.`
                       : 'Position face directly in front of camera with good lighting.'}
@@ -907,19 +1061,54 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
               </div>
 
               {/* VERTICAL ACTION BUTTONS */}
-              <div className="space-y-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+              <div className="space-y-2.5 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                {/* Touchless Auto-Punch Toggle Card */}
+                {targetEmployee?.faceEnrolled && (
+                  <label className="flex items-center justify-between p-2.5 bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-300/70 dark:border-emerald-800/60 rounded-xl cursor-pointer transition-colors hover:bg-emerald-100/70">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 block leading-tight">
+                          Auto-Punch on Match
+                        </span>
+                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                          Touchless: Marks attendance instantly
+                        </span>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={autoPunch}
+                      onChange={(e) => {
+                        setAutoPunch(e.target.checked);
+                        if (!e.target.checked) setAutoPunchCountdown(null);
+                      }}
+                      className="w-4 h-4 text-emerald-600 rounded-md focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                    />
+                  </label>
+                )}
+
                 {/* Primary: Confirm Punch */}
                 <button
                   type="button"
                   onClick={handleCheckIn}
                   disabled={submitting || !targetEmployee?.faceEnrolled || !isVerified}
-                  className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-200 dark:disabled:bg-neutral-800 disabled:text-neutral-400 dark:disabled:text-neutral-600 disabled:opacity-75 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 shadow-md transition-all cursor-pointer"
+                  className={`w-full py-3 px-4 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 shadow-md transition-all cursor-pointer ${
+                    isVerified
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25 ring-2 ring-emerald-400/40'
+                      : 'bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 opacity-80 cursor-not-allowed'
+                  }`}
                 >
                   <div className="flex items-center gap-2">
                     {submitting ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
                         <span>Recording Punch...</span>
+                      </>
+                    ) : autoPunchCountdown !== null ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-emerald-200" />
+                        <span>Auto-Punching In Progress...</span>
                       </>
                     ) : (
                       <>
@@ -931,6 +1120,11 @@ export const CameraAttendanceModal: React.FC<CameraAttendanceModalProps> = ({
                   {!isVerified && targetEmployee?.faceEnrolled && faceDetected && (
                     <span className="text-[10px] font-normal text-rose-500 dark:text-rose-400">
                       Face Mismatch — Punch Blocked
+                    </span>
+                  )}
+                  {isVerified && (
+                    <span className="text-[10px] font-normal text-emerald-100">
+                      Identity Verified ({matchResult?.confidence}%)
                     </span>
                   )}
                 </button>

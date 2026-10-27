@@ -531,7 +531,7 @@ export function extractFaceBiometrics(sourceCanvas: HTMLCanvasElement): number[]
 export function compareFaceBiometrics(
   vector1: number[],
   vector2: number[],
-  minConfidence = 75
+  minConfidence = 70
 ): BiometricMatchResult {
   if (!Array.isArray(vector1) || !Array.isArray(vector2) || vector1.length === 0 || vector2.length === 0) {
     return {
@@ -596,22 +596,20 @@ export function compareFaceBiometrics(
   // Same individual: compositeSimilarity >= 0.75 -> Confidence 78% - 98%
   // Different individual: compositeSimilarity <= 0.45 -> Confidence 15% - 42%
   let confidence = 0;
-  if (compositeSimilarity >= 0.88) {
-    confidence = Math.round(92 + ((compositeSimilarity - 0.88) / 0.12) * 7);
-  } else if (compositeSimilarity >= 0.78) {
-    confidence = Math.round(82 + ((compositeSimilarity - 0.78) / 0.10) * 9);
+  if (compositeSimilarity >= 0.85) {
+    confidence = Math.round(92 + ((compositeSimilarity - 0.85) / 0.15) * 7);
   } else if (compositeSimilarity >= 0.74) {
-    confidence = Math.round(75 + ((compositeSimilarity - 0.74) / 0.04) * 6);
-  } else if (compositeSimilarity >= 0.60) {
-    confidence = Math.round(55 + ((compositeSimilarity - 0.60) / 0.14) * 15);
-  } else if (compositeSimilarity >= 0.45) {
-    confidence = Math.round(35 + ((compositeSimilarity - 0.45) / 0.15) * 18);
+    confidence = Math.round(80 + ((compositeSimilarity - 0.74) / 0.11) * 11);
+  } else if (compositeSimilarity >= 0.66) {
+    confidence = Math.round(70 + ((compositeSimilarity - 0.66) / 0.08) * 9);
+  } else if (compositeSimilarity >= 0.52) {
+    confidence = Math.round(45 + ((compositeSimilarity - 0.52) / 0.14) * 20);
   } else {
-    confidence = Math.round(Math.max(8, (compositeSimilarity / 0.45) * 32));
+    confidence = Math.round(Math.max(8, (compositeSimilarity / 0.52) * 40));
   }
   confidence = Math.min(99, Math.max(5, confidence));
 
-  const isMatch = compositeSimilarity >= 0.74 && confidence >= minConfidence;
+  const isMatch = compositeSimilarity >= 0.66 && confidence >= minConfidence;
 
   let scoreLabel: BiometricMatchResult['scoreLabel'] = 'Mismatch';
   if (confidence >= 90) scoreLabel = 'Very High';
